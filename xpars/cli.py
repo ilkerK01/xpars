@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import sys
 from urllib.parse import parse_qsl, urlsplit
@@ -8,6 +9,70 @@ from urllib.parse import parse_qsl, urlsplit
 from . import (blind, confirm, crawl, discover as discover_mod, http,
                params as paramlib, passive, payloads, refine, report, scanner,
                scope, stored, verify, waf)
+
+_GREEN = "\033[92m"
+_RED = "\033[91m"
+_DIM = "\033[2m"
+_RESET = "\033[0m"
+_BOX = "╗╔╝╚═║"
+BANNER_ART = (
+    "██╗  ██╗██████╗  █████╗ ██████╗ ███████╗",
+    "╚██╗██╔╝██╔══██╗██╔══██╗██╔══██╗██╔════╝",
+    " ╚███╔╝ ██████╔╝███████║██████╔╝███████╗",
+    " ██╔██╗ ██╔═══╝ ██╔══██║██╔══██╗╚════██║",
+    "██╔╝ ██╗██║     ██║  ██║██║  ██║███████║",
+    "╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝",
+)
+
+
+def _enable_vt():
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        k.SetConsoleMode(k.GetStdHandle(-11), 7)
+    except Exception:
+        pass
+
+
+def _colorize(line):
+    out = []
+    for ch in line:
+        if ch == "█":
+            out.append(_GREEN + ch)
+        elif ch in _BOX:
+            out.append(_RED + ch)
+        else:
+            out.append(ch)
+    out.append(_RESET)
+    return "".join(out)
+
+
+def banner():
+    try:
+        if not sys.stderr.isatty():
+            return
+    except Exception:
+        return
+    _enable_vt()
+    lines = [""]
+    for row in BANNER_ART:
+        lines.append("   " + _colorize(row))
+    lines.append("")
+    lines.append("   " + _GREEN + "xpars" + _RESET + _DIM
+                 + "  reflected / DOM XSS tarayici  v0.1.0" + _RESET)
+    lines.append("   " + _RED + "yalnizca sahip oldugun ya da yetkili hedeflerde kullan"
+                 + _RESET)
+    lines.append("")
+    try:
+        sys.stderr.write("\n".join(lines) + "\n")
+    except Exception:
+        try:
+            sys.stderr.write("\n   XPARS  reflected / DOM XSS tarayici  v0.1.0\n"
+                             "   yalnizca yetkili hedeflerde kullan\n\n")
+        except Exception:
+            pass
 
 
 def _dedup_forms(forms):
@@ -114,6 +179,7 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.clear:
         print("\033[2J\033[H", end="")
+    banner()
     urls = _load_urls(args)
     if not urls:
         print("hedef yok: -u <url> ya da --urls <dosya> ver")
