@@ -108,6 +108,11 @@ SEARCH_SOURCES = ("location.search", "url.searchparams", "new urlsearchparams",
                   "location.href", "document.url")
 NAME_SOURCES = ("window.name",)
 MSG_SOURCES = ("postmessage", "onmessage")
+COOKIE_SOURCES = ("document.cookie",)
+STORAGE_SOURCES = ("localstorage", "sessionstorage")
+COMMON_STORE_KEYS = ("xpars", "q", "search", "s", "redirect", "ref", "lang", "id",
+                     "name", "msg", "data", "token", "next", "url", "returnurl",
+                     "callback", "hash", "value")
 
 
 def _dom_kinds(sources) -> list[str]:
@@ -121,6 +126,10 @@ def _dom_kinds(sources) -> list[str]:
         out.append("name")
     if s.intersection(MSG_SOURCES):
         out.append("message")
+    if s.intersection(COOKIE_SOURCES):
+        out.append("cookie")
+    if s.intersection(STORAGE_SOURCES):
+        out.append("storage")
     return out
 
 
@@ -396,6 +405,28 @@ class Engine:
                 p.evaluate("(v)=>{window.postMessage(v,'*');}", payload)
                 p.evaluate("(v)=>{try{window.postMessage({type:'message',data:v,"
                            "message:v,text:v,html:v},'*');}catch(e){}}", payload)
+            return self._run(nav)
+        if kind == "cookie":
+            try:
+                self.ctx.clear_cookies()
+                self.ctx.add_cookies([{"name": k, "value": payload, "url": base}
+                                      for k in COMMON_STORE_KEYS])
+            except Exception:
+                return []
+            try:
+                return self._run(lambda p: p.goto(base, wait_until="domcontentloaded"))
+            finally:
+                try:
+                    self.ctx.clear_cookies()
+                except Exception:
+                    pass
+        if kind == "storage":
+            def nav(p):
+                p.goto(base, wait_until="domcontentloaded")
+                p.evaluate("([ks,v])=>{try{for(const k of ks){"
+                           "localStorage.setItem(k,v);sessionStorage.setItem(k,v);}}"
+                           "catch(e){}}", [list(COMMON_STORE_KEYS), payload])
+                p.goto(base, wait_until="domcontentloaded")
             return self._run(nav)
         return []
 

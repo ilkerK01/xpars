@@ -199,6 +199,8 @@ def render(result):
         for d in dom_lead:
             lines.append("")
             lines.append("[DOM-IPUCU] %s" % d["url"])
+            if d.get("how"):
+                lines.append("  tur     : %s" % d["how"])
             lines.append("  kaynak  : %s" % ", ".join(d.get("sources", [])))
             lines.append("  sink    : %s" % ", ".join(d.get("sinks", [])))
             if d.get("script"):

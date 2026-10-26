@@ -91,3 +91,24 @@ def test_dom_cross_block(server):
     result = scanner.scan(_client(), [server + "/domsplit"], threads=2)
     assert any("location.hash" in d["sources"] and "innerhtml" in d["sinks"]
                for d in result["dom"])
+
+
+def test_dom_inline_handler(server):
+    result = scanner.scan(_client(), [server + "/dominline"], threads=2)
+    assert any(d.get("how") == "dom-inline" and "location.hash" in d["sources"]
+               for d in result["dom"])
+
+
+def test_dom_taint_linked(server):
+    result = scanner.scan(_client(), [server + "/domtaint"], threads=2)
+    assert any(d.get("how") == "dom-taint-linked" for d in result["dom"])
+
+
+def test_dom_cookie_source(server):
+    result = scanner.scan(_client(), [server + "/domcookie"], threads=2)
+    assert any("document.cookie" in d["sources"] for d in result["dom"])
+
+
+def test_dom_storage_source(server):
+    result = scanner.scan(_client(), [server + "/domstorage"], threads=2)
+    assert any("localstorage" in d["sources"] for d in result["dom"])

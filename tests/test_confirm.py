@@ -122,6 +122,13 @@ def test_confirm_dom_message(server):
 
 
 @NEEDS_PW
+def test_confirm_dom_storage(server):
+    d = {"url": server + "/domstorage", "sources": ["localstorage"],
+         "sinks": ["innerhtml"], "verified": False}
+    assert confirm.run([], [d])["dom_confirmed"] == 1
+
+
+@NEEDS_PW
 def test_plain_hash_without_decode_not_confirmed(server):
     d = {"url": server + "/dom", "sources": ["location.hash"],
          "sinks": ["innerhtml"], "verified": False}

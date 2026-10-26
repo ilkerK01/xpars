@@ -355,6 +355,8 @@ def _dom_pass(client, urls):
         hits = detect.dom_findings(mbody)
         if not hits:
             hits = detect.dom_findings_combined(mbody)
+        hits = hits + detect.dom_inline_findings(mbody)
+        hits = hits + detect.dom_taint_findings(" ; ".join(detect.SCRIPT_RE.findall(mbody)))
         for src in detect.script_srcs(mbody)[:12]:
             jsurl = urljoin(u, src)
             if urlsplit(jsurl).hostname != parts.hostname:
@@ -366,16 +368,29 @@ def _dom_pass(client, urls):
                 js = client.get(jsurl).text
             except Exception:
                 continue
-            for h in detect.dom_findings_js(js):
+            for h in detect.dom_findings_js(js) + detect.dom_taint_findings(js):
                 h = dict(h)
                 h["script"] = jsurl
                 hits.append(h)
+        best = {}
+        order = []
         for h in hits:
-            h = dict(h)
+            key = (tuple(h.get("sources", [])), tuple(h.get("sinks", [])),
+                   h.get("script"))
+            how = h.get("how") or "static-sink-lead"
+            prev = best.get(key)
+            if prev is None:
+                best[key] = h
+                order.append(key)
+            elif (prev.get("how") or "static-sink-lead") == "static-sink-lead" \
+                    and how != "static-sink-lead":
+                best[key] = h
+        for key in order:
+            h = dict(best[key])
             h["url"] = u
             h["verified"] = False
             h["severity"] = "info"
-            h["how"] = "static-sink-lead"
+            h["how"] = h.get("how") or "static-sink-lead"
             out.append(h)
     return out
 

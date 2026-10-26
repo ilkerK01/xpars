@@ -10,12 +10,14 @@ SINKS = ("innerhtml", "outerhtml", "document.write", "insertadjacenthtml",
          "location.href", "window.open", "range.createcontextualfragment",
          "jquery", "$(", ".after(", ".before(", ".append(", ".prepend(",
          "domparser", "srcdoc", "new function", "dangerouslysetinnerhtml",
-         "bypasssecuritytrust", "v-html", "ng-bind-html", "trustashtml")
+         "bypasssecuritytrust", "v-html", "ng-bind-html", "trustashtml",
+         ".attr(", ".replacewith(")
 SOURCES = ("location.hash", "location.search", "location.href", "document.url",
            "document.documenturi", "window.name", "document.referrer",
            "location.pathname", "location)", "document.location",
            "url.searchparams", "new urlsearchparams", "postmessage", "onmessage",
-           "localstorage", "sessionstorage")
+           "localstorage", "sessionstorage", "document.cookie", "document.baseuri",
+           "history.state", "event.data")
 
 SCRIPT_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.IGNORECASE | re.DOTALL)
 ATTR_UNQUOTED = re.compile(r"=\s*[^\s\"'<>]*$")
@@ -280,6 +282,66 @@ def dom_findings_combined(body):
     if srcs and snks:
         return [{"sources": sorted(set(srcs)), "sinks": sorted(set(snks))}]
     return []
+
+
+INLINE_HANDLER_RE = re.compile(
+    r"\son([a-z]+)\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.IGNORECASE)
+URI_ATTR_RE = re.compile(
+    r"\s(href|src|formaction|action|data|xlink:href|poster)\s*=\s*"
+    r"(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.IGNORECASE)
+VAR_ASSIGN_RE = re.compile(r"(?:var|let|const)\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+)")
+
+
+def _source_tokens(text):
+    low = text.lower()
+    return sorted({s for s in SOURCES if s in low})
+
+
+def dom_inline_findings(body):
+    hits = []
+    for m in INLINE_HANDLER_RE.finditer(body):
+        srcs = _source_tokens(m.group(2).strip("\"'"))
+        if srcs:
+            hits.append({"sources": srcs, "sinks": ["inline:on" + m.group(1).lower()],
+                         "how": "dom-inline"})
+    for m in URI_ATTR_RE.finditer(body):
+        val = m.group(2).strip("\"'")
+        if "javascript:" in val.lower():
+            srcs = _source_tokens(val)
+            if srcs:
+                hits.append({"sources": srcs,
+                             "sinks": ["javascript-uri:" + m.group(1).lower()],
+                             "how": "dom-inline"})
+    return hits
+
+
+def dom_taint_findings(text):
+    tainted = {}
+    for m in VAR_ASSIGN_RE.finditer(text):
+        rhs = m.group(2).lower()
+        srcs = [s for s in SOURCES if s in rhs]
+        if srcs:
+            tainted[m.group(1).lower()] = sorted(set(srcs))
+    hits = []
+    seen = set()
+    for stmt in re.split(r"[;\n]", text):
+        sl = stmt.lower()
+        snks = sorted({s for s in SINKS if s in sl})
+        if not snks:
+            continue
+        flow = set(s for s in SOURCES if s in sl)
+        for var, vsrcs in tainted.items():
+            if re.search(r"\b" + re.escape(var) + r"\b", sl):
+                flow.update(vsrcs)
+        if not flow:
+            continue
+        key = (tuple(sorted(flow)), tuple(snks))
+        if key in seen:
+            continue
+        seen.add(key)
+        hits.append({"sources": sorted(flow), "sinks": snks,
+                     "how": "dom-taint-linked"})
+    return hits
 
 
 SCRIPT_SRC_RE = re.compile(r"<script[^>]+src\s*=\s*[\"']?([^\"'> ]+)", re.IGNORECASE)

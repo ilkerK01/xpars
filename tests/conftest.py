@@ -151,6 +151,21 @@ class VulnHandler(BaseHTTPRequestHandler):
             self._send('<html><body><form action="/csrfpost" method="post">'
                        '<input type="hidden" name="token" value="s3cr3t">'
                        '<input name="q"></form></body></html>')
+        elif path == "/dominline":
+            self._send("<html><body><div id=o></div>"
+                       "<a href=\"#\" onclick=\"document.getElementById('o')"
+                       ".innerHTML=location.hash\">x</a></body></html>")
+        elif path == "/domtaint":
+            self._send("<html><body><script>var u=location.search;"
+                       "document.write(u);</script></body></html>")
+        elif path == "/domcookie":
+            self._send("<html><body><div id=o></div><script>"
+                       "document.getElementById('o').innerHTML=document.cookie;"
+                       "</script></body></html>")
+        elif path == "/domstorage":
+            self._send("<html><body><div id=o></div><script>"
+                       "document.getElementById('o').innerHTML="
+                       "localStorage.getItem('xpars');</script></body></html>")
         elif path == "/waf":
             data = b"<html><body>ok</body></html>"
             self.send_response(200)
