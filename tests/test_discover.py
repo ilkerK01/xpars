@@ -61,7 +61,7 @@ def test_bundled_wordlist_loads():
 
 
 def test_cli_discover(server, capsys):
-    rc = cli.main(["-u", server + "/greet", "--discover", "--izin", "--no-waf"])
+    rc = cli.main(["-u", server + "/greet", "--discover", "--no-waf"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "kesif-param" in out
@@ -69,7 +69,7 @@ def test_cli_discover(server, capsys):
 
 
 def test_cli_discover_reports_params(server, capsys):
-    rc = cli.main(["-u", server + "/hidden", "--discover", "--izin", "--no-waf"])
+    rc = cli.main(["-u", server + "/hidden", "--discover", "--no-waf"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "KESIF-PARAM" in out

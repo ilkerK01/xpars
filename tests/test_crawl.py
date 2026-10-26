@@ -38,7 +38,7 @@ def test_js_endpoint_discovery(server):
 def test_cli_auto_pipeline(server, capsys):
     from xpars import cli
     host = server.replace("http://", "")
-    rc = cli.main(["--get", "-u", host, "--auto", "--no-passive", "--izin", "--threads", "4"])
+    rc = cli.main(["--get", "-u", host, "--auto", "--no-passive", "--threads", "4"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "[kesif]" in out

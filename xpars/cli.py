@@ -149,7 +149,6 @@ def build_parser():
     p.add_argument("--confirm-timeout", dest="confirm_timeout", type=float, default=8.0)
     p.add_argument("--insecure", action="store_true")
     p.add_argument("--html", dest="html_output")
-    p.add_argument("--izin", action="store_true")
     p.add_argument("-o", "--output", dest="output")
     p.add_argument("--version", action="version", version="xpars 0.1.0")
     p.set_defaults(passive=True, waf=True)
@@ -193,11 +192,6 @@ def main(argv=None):
             print("[atlandi] %s -> %s" % (u, sc.reason(u)))
     if not permitted:
         print("izinli hedef yok (kapsam disi)")
-        return 2
-    if not args.izin:
-        print("xpars canli hedeflere payload GONDERIR.")
-        print("yalnizca sahip oldugun ya da yetkili oldugun hedeflerde calistir.")
-        print("onaylamak icin --izin ekle.")
         return 2
     if args.shuffle:
         random.shuffle(permitted)

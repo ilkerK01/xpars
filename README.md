@@ -15,10 +15,10 @@ pip install -e .
 ## Kullanım
 
 ```
-python -m xpars --get -u "http://host/path?p=1" --izin
-python -m xpars --get --urls hedefler.txt --payloads payloads.txt --izin -o rapor.json
-python -m xpars -u example.com --crawl --izin
-python -m xpars -u example.com --crawl 2 --max-pages 100 --izin
+python -m xpars --get -u "http://host/path?p=1"
+python -m xpars --get --urls hedefler.txt --payloads payloads.txt -o rapor.json
+python -m xpars -u example.com --crawl
+python -m xpars -u example.com --crawl 2 --max-pages 100
 ```
 
 İki giriş biçimi var: parametreli URL (ya da `--urls` listesi) doğrudan test edilir;
@@ -133,7 +133,6 @@ Bayraklar xss0r ile hizalı: `--get`, `--urls`, `--payloads`, `--shuffle`, `--cl
 
 ## Güvenlik
 
-- `--izin` olmadan çalışmaz; canlı hedeflere payload gönderdiğini açıkça onaylatır.
 - `--scope` allowlist, `--exclude` denylist. `europa.eu` ve `unesco.org` varsayılan
   olarak reddedilir.
 

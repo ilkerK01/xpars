@@ -23,7 +23,7 @@ def test_crawl_collects_post_form(server):
 
 
 def test_cli_data_post(server, capsys):
-    rc = cli.main(["-u", server + "/post-reflect", "--data", "q=1", "--izin"])
+    rc = cli.main(["-u", server + "/post-reflect", "--data", "q=1"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "POST" in out
