@@ -140,22 +140,14 @@ def _read_sitemap(client, url, seed_hosts, seed_rdns, mode, scope):
     return out
 
 
-def discover(client, seeds, scope, depth=1, max_pages=60, threads=10,
-             mode="strict", include_js=True, robots=True, forms_out=None):
-    seeds = [refine.normalize(s) for s in seeds]
-    seeds = [s for s in seeds if scope.permitted(s)]
-    if not seeds:
-        return []
-    seed_hosts = {refine.host(s) for s in seeds}
-    seed_rdns = {refine.registered_domain(h) for h in seed_hosts}
+def _crawl_host(client, seeds, scope, seed_hosts, seed_rdns, depth, max_pages,
+                threads, mode, include_js, robots, forms_out):
     visited = set()
     endpoints = set()
     frontier = set(seeds)
-
     if robots:
         for s in seeds:
             endpoints |= _robots_sitemap(client, s, seed_hosts, seed_rdns, mode, scope)
-
     level = 0
     while frontier and len(visited) < max_pages and level <= depth:
         batch = [u for u in frontier if u not in visited][:max_pages - len(visited)]
@@ -209,4 +201,31 @@ def discover(client, seeds, scope, depth=1, max_pages=60, threads=10,
                             if _in_scope(e, seed_hosts, seed_rdns, mode, scope):
                                 endpoints.add(e)
         level += 1
+    return endpoints
+
+
+def discover(client, seeds, scope, depth=1, max_pages=60, threads=10,
+             mode="strict", include_js=True, robots=True, forms_out=None,
+             on_progress=None):
+    seeds = [refine.normalize(s) for s in seeds]
+    seeds = [s for s in seeds if scope.permitted(s)]
+    if not seeds:
+        return []
+    seed_hosts = {refine.host(s) for s in seeds}
+    seed_rdns = {refine.registered_domain(h) for h in seed_hosts}
+    groups = {}
+    for s in seeds:
+        groups.setdefault(refine.host(s), []).append(s)
+    ordered = sorted(groups)
+    total = len(ordered)
+    endpoints = set()
+    for i, host in enumerate(ordered, 1):
+        if on_progress is not None:
+            try:
+                on_progress(i, total, host)
+            except Exception:
+                pass
+        endpoints |= _crawl_host(client, groups[host], scope, seed_hosts, seed_rdns,
+                                 depth, max_pages, threads, mode, include_js,
+                                 robots, forms_out)
     return sorted(endpoints)

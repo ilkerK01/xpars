@@ -35,6 +35,32 @@ def test_js_endpoint_discovery(server):
     assert any("/search?q=2" in u for u in urls)
 
 
+def test_discover_per_host_budget(monkeypatch):
+    calls = []
+
+    def fake_host(client, seeds, sc, seed_hosts, seed_rdns, depth, max_pages,
+                  threads, mode, include_js, robots, forms_out):
+        calls.append((sorted(seeds), max_pages))
+        return {sorted(seeds)[0]}
+
+    monkeypatch.setattr(crawl, "_crawl_host", fake_host)
+
+    class AllowAll:
+        def permitted(self, u):
+            return True
+
+    prog = []
+    out = crawl.discover(None,
+                         ["http://a.test/", "http://b.test/", "http://a.test/x"],
+                         AllowAll(), max_pages=7,
+                         on_progress=lambda d, t, h: prog.append((d, t, h)))
+    assert len(calls) == 2
+    assert all(mp == 7 for _, mp in calls)
+    assert [p[0] for p in prog] == [1, 2]
+    assert prog[-1][1] == 2
+    assert len(out) == 2
+
+
 def test_cli_auto_pipeline(server, capsys):
     from xpars import cli
     host = server.replace("http://", "")

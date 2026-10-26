@@ -75,6 +75,21 @@ def banner():
             pass
 
 
+def _crawl_progress(done, total, host):
+    try:
+        if not sys.stderr.isatty():
+            if total <= 1 or done == total or done % 10 == 0:
+                sys.stderr.write("[crawl] %d/%d %s\n" % (done, total, host))
+                sys.stderr.flush()
+            return
+        sys.stderr.write("\r\033[2K[crawl] %d/%d %s" % (done, total, host))
+        if done == total:
+            sys.stderr.write("\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
 def _dedup_forms(forms):
     out = []
     seen = set()
@@ -225,7 +240,8 @@ def main(argv=None):
             depth = args.crawl if args.crawl is not None else (2 if args.auto else 1)
             collected += crawl.discover(client, permitted, sc, depth=depth,
                                         max_pages=args.max_pages, threads=args.threads,
-                                        mode=mode, forms_out=post_forms)
+                                        mode=mode, forms_out=post_forms,
+                                        on_progress=_crawl_progress)
         collected = [u for u in collected if sc.permitted(u)]
         full = refine.refine(collected, params_only=False,
                              dedup=not args.no_dedup, collapse_numbers=args.aggressive_dedup)
