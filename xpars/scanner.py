@@ -77,6 +77,66 @@ def _synthetic_refs(contexts):
             for c in contexts]
 
 
+def _probe_reflection(send, mk):
+    base = send(mk)
+    if base is None or waf.blocked(base):
+        return None
+    try:
+        bbody = base.text
+    except Exception:
+        return None
+    reachable = mk in bbody
+    presp = send(detect.probe_value(mk))
+    waf_on_payload = presp is not None and waf.blocked(presp)
+    if presp is not None and not waf_on_payload:
+        try:
+            body = presp.text
+        except Exception:
+            body = bbody
+        refs = detect.reflections(body, mk, presp.headers.get("Content-Type", ""))
+        return {"mode": "normal", "refs": refs,
+                "char_map": detect.char_survival(body, mk),
+                "status": presp.status_code, "body": body,
+                "contexts": _contexts_from(refs),
+                "confirmed_any": any(r["confirmed"] for r in refs)}
+    if reachable:
+        contexts = list(WAF_EVADE_CONTEXTS)
+        return {"mode": "waf", "refs": _synthetic_refs(contexts),
+                "char_map": {c: False for c in detect.PROBE_TAIL},
+                "status": getattr(presp, "status_code", base.status_code),
+                "body": bbody, "contexts": contexts, "confirmed_any": False}
+    return {"mode": "dead"}
+
+
+def _build_finding(pr, method, url, param, mk, payloads_list, send, client, evade):
+    if not pr or pr.get("mode") == "dead":
+        return None
+    evade_eff = evade or pr["mode"] == "waf"
+    working = _probe_payloads(client, send, payloads_list, pr["contexts"],
+                              pr["char_map"], evade_eff) if pr["refs"] else []
+    if pr["mode"] == "normal":
+        if not (pr["confirmed_any"] or working):
+            return None
+        return _finding(method, url, param, pr["refs"], pr["char_map"], working,
+                        pr["status"], pr["body"], mk)
+    f = _finding(method, url, param, pr["refs"], pr["char_map"], working,
+                 pr["status"], pr["body"], mk)
+    f["waf"] = "payload-blocked"
+    if working:
+        f["how"] = "waf-evaded"
+        f["severity"] = "high"
+    else:
+        f["how"] = "reflected-behind-waf"
+        f["severity"] = "low"
+    return f
+
+
+def _field_default(name, values):
+    if values and values.get(name):
+        return values[name]
+    return "1"
+
+
 def scan_url(client, url, payloads_list=None, blind=None, evade=False):
     findings = []
     blind_sent = []
@@ -89,67 +149,26 @@ def scan_url(client, url, payloads_list=None, blind=None, evade=False):
             except Exception:
                 return None
 
-        base = send(mk)
-        if base is None or waf.blocked(base):
-            if blind and send(blind) is not None:
-                blind_sent.append({"url": url, "param": name})
-            continue
-        try:
-            bbody = base.text
-        except Exception:
-            continue
-        reachable_reflect = mk in bbody
-        probe = detect.probe_value(mk)
-        presp = send(probe)
-        waf_on_payload = presp is not None and waf.blocked(presp)
-        finding = None
-        if presp is not None and not waf_on_payload:
-            try:
-                body = presp.text
-            except Exception:
-                body = bbody
-            refs = detect.reflections(body, mk, presp.headers.get("Content-Type", ""))
-            char_map = detect.char_survival(body, mk)
-            confirmed_any = any(r["confirmed"] for r in refs)
-            contexts = _contexts_from(refs)
-            working = _probe_payloads(client, send, payloads_list, contexts,
-                                      char_map, evade) if refs else []
-            if confirmed_any or working:
-                finding = _finding("GET", url, name, refs, char_map, working,
-                                   presp.status_code, body, mk)
-        elif reachable_reflect:
-            char_map = {c: False for c in detect.PROBE_TAIL}
-            contexts = list(WAF_EVADE_CONTEXTS)
-            working = _probe_payloads(client, send, payloads_list, contexts,
-                                      char_map, True)
-            refs = _synthetic_refs(contexts)
-            status = getattr(presp, "status_code", base.status_code)
-            finding = _finding("GET", url, name, refs, char_map, working,
-                               status, bbody, mk)
-            finding["waf"] = "payload-blocked"
-            if working:
-                finding["how"] = "waf-evaded"
-                finding["severity"] = "high"
-            else:
-                finding["how"] = "reflected-behind-waf"
-                finding["severity"] = "low"
-        if finding is not None:
-            findings.append(finding)
+        f = _build_finding(_probe_reflection(send, mk), "GET", url, name, mk,
+                           payloads_list, send, client, evade)
+        if f is not None:
+            findings.append(f)
         if blind and send(blind) is not None:
             blind_sent.append({"url": url, "param": name})
     return findings, blind_sent
 
 
 def scan_form(client, action, fields, payloads_list=None, blind=None, evade=False,
-              json_body=False, multipart=False):
+              json_body=False, multipart=False, values=None):
     findings = []
     blind_sent = []
+    method = "POST-JSON" if json_body else "POST"
     for name in fields:
         mk = payloads.marker()
-        probe = detect.probe_value(mk)
 
         def send(p, _n=name):
-            payload_body = {f: (p if f == _n else "1") for f in fields}
+            payload_body = {f: (p if f == _n else _field_default(f, values))
+                            for f in fields}
             try:
                 if json_body:
                     return client.post_json(action, payload_body)
@@ -157,29 +176,12 @@ def scan_form(client, action, fields, payloads_list=None, blind=None, evade=Fals
             except Exception:
                 return None
 
-        resp = send(probe)
-        if resp is None or waf.blocked(resp):
-            continue
-        ct = resp.headers.get("Content-Type", "")
-        try:
-            rbody = resp.text
-        except Exception:
-            continue
-        refs = detect.reflections(rbody, mk, ct)
-        char_map = detect.char_survival(rbody, mk)
-        confirmed_any = any(r["confirmed"] for r in refs)
-        contexts = _contexts_from(refs)
-        working = []
-        if refs:
-            working = _probe_payloads(client, send, payloads_list, contexts, char_map, evade)
-        if confirmed_any or working:
-            method = "POST-JSON" if json_body else "POST"
-            findings.append(_finding(method, action, name, refs, char_map, working,
-                                     resp.status_code, rbody, mk))
-        if blind:
-            send(blind)
-            blind_sent.append({"url": action, "param": name,
-                               "method": "POST-JSON" if json_body else "POST"})
+        f = _build_finding(_probe_reflection(send, mk), method, action, name, mk,
+                           payloads_list, send, client, evade)
+        if f is not None:
+            findings.append(f)
+        if blind and send(blind) is not None:
+            blind_sent.append({"url": action, "param": name, "method": method})
     return findings, blind_sent
 
 
@@ -201,7 +203,6 @@ def scan_headers(client, url, payloads_list=None, evade=False, cookie_probe=True
     findings = []
     for hname in REFLECT_HEADERS:
         mk = payloads.marker()
-        probe = detect.probe_value(mk)
 
         def send(p, _h=hname):
             try:
@@ -209,26 +210,12 @@ def scan_headers(client, url, payloads_list=None, evade=False, cookie_probe=True
             except Exception:
                 return None
 
-        resp = send(probe)
-        if resp is None or waf.blocked(resp):
-            continue
-        try:
-            rbody = resp.text
-        except Exception:
-            continue
-        refs = detect.reflections(rbody, mk, resp.headers.get("Content-Type", ""))
-        if not refs:
-            continue
-        char_map = detect.char_survival(rbody, mk)
-        contexts = _contexts_from(refs)
-        confirmed_any = any(r["confirmed"] for r in refs)
-        working = _probe_payloads(client, send, payloads_list, contexts, char_map, evade)
-        if confirmed_any or working:
-            findings.append(_finding("HEADER", url, hname, refs, char_map, working,
-                                     resp.status_code, rbody, mk))
+        f = _build_finding(_probe_reflection(send, mk), "HEADER", url, hname, mk,
+                           payloads_list, send, client, evade)
+        if f is not None:
+            findings.append(f)
     if cookie_probe:
         mk = payloads.marker()
-        probe = detect.probe_value(mk)
 
         def csend(p):
             try:
@@ -236,21 +223,10 @@ def scan_headers(client, url, payloads_list=None, evade=False, cookie_probe=True
             except Exception:
                 return None
 
-        resp = csend(probe)
-        if resp is not None and not waf.blocked(resp):
-            try:
-                rbody = resp.text
-            except Exception:
-                rbody = ""
-            refs = detect.reflections(rbody, mk, resp.headers.get("Content-Type", ""))
-            if refs:
-                char_map = detect.char_survival(rbody, mk)
-                contexts = _contexts_from(refs)
-                confirmed_any = any(r["confirmed"] for r in refs)
-                working = _probe_payloads(client, csend, payloads_list, contexts, char_map, evade)
-                if confirmed_any or working:
-                    findings.append(_finding("COOKIE", url, "Cookie:xpars", refs,
-                                             char_map, working, resp.status_code, rbody, mk))
+        f = _build_finding(_probe_reflection(csend, mk), "COOKIE", url,
+                           "Cookie:xpars", mk, payloads_list, csend, client, evade)
+        if f is not None:
+            findings.append(f)
     return findings
 
 
@@ -259,7 +235,6 @@ def scan_json_template(client, action, template, payloads_list=None, evade=False
     findings = []
     for path in jsontpl.leaves(template):
         mk = payloads.marker()
-        probe = detect.probe_value(mk)
 
         def send(p, _pp=path):
             try:
@@ -267,25 +242,10 @@ def scan_json_template(client, action, template, payloads_list=None, evade=False
             except Exception:
                 return None
 
-        resp = send(probe)
-        if resp is None or waf.blocked(resp):
-            continue
-        try:
-            rbody = resp.text
-        except Exception:
-            continue
-        ct = resp.headers.get("Content-Type", "")
-        refs = detect.reflections(rbody, mk, ct)
-        char_map = detect.char_survival(rbody, mk)
-        confirmed_any = any(r["confirmed"] for r in refs)
-        contexts = _contexts_from(refs)
-        working = []
-        if refs:
-            working = _probe_payloads(client, send, payloads_list, contexts, char_map, evade)
-        if confirmed_any or working:
-            pname = ".".join(str(k) for k in path) or "(root)"
-            f = _finding("POST-JSON", action, pname, refs, char_map, working,
-                         resp.status_code, rbody, mk)
+        pname = ".".join(str(k) for k in path) or "(root)"
+        f = _build_finding(_probe_reflection(send, mk), "POST-JSON", action, pname,
+                           mk, payloads_list, send, client, evade)
+        if f is not None:
             f["json_template"] = template
             f["json_path"] = list(path)
             findings.append(f)
@@ -296,7 +256,6 @@ def scan_path(client, url, payloads_list=None, evade=False):
     findings = []
     for idx, seg in params.path_segments(url):
         mk = payloads.marker()
-        probe = mk + "<>'\"();{}="
 
         def send(p, _i=idx):
             try:
@@ -304,23 +263,10 @@ def scan_path(client, url, payloads_list=None, evade=False):
             except Exception:
                 return None
 
-        resp = send(probe)
-        if resp is None or waf.blocked(resp):
-            continue
-        try:
-            body = resp.text
-        except Exception:
-            continue
-        refs = detect.reflections(body, mk, resp.headers.get("Content-Type", ""))
-        if not refs:
-            continue
-        char_map = detect.char_survival(body, mk)
-        contexts = _contexts_from(refs)
-        confirmed_any = any(r["confirmed"] for r in refs)
-        working = _probe_payloads(client, send, payloads_list, contexts, char_map, evade)
-        if confirmed_any or working:
-            f = _finding("PATH", url, "path[%d]:%s" % (idx, seg), refs, char_map,
-                         working, resp.status_code, body, mk)
+        f = _build_finding(_probe_reflection(send, mk), "PATH", url,
+                           "path[%d]:%s" % (idx, seg), mk, payloads_list, send,
+                           client, evade)
+        if f is not None:
             f["path_index"] = idx
             findings.append(f)
     return findings
@@ -339,7 +285,6 @@ def scan_graphql(client, action, query, variables=None, payloads_list=None, evad
     findings = []
     for path in leaves:
         mk = payloads.marker()
-        probe = detect.probe_value(mk)
 
         def send(p, _pp=path):
             try:
@@ -347,25 +292,10 @@ def scan_graphql(client, action, query, variables=None, payloads_list=None, evad
             except Exception:
                 return None
 
-        resp = send(probe)
-        if resp is None or waf.blocked(resp):
-            continue
-        try:
-            rbody = resp.text
-        except Exception:
-            continue
-        ct = resp.headers.get("Content-Type", "")
-        refs = detect.reflections(rbody, mk, ct)
-        if not refs:
-            continue
-        char_map = detect.char_survival(rbody, mk)
-        confirmed_any = any(r["confirmed"] for r in refs)
-        contexts = _contexts_from(refs)
-        working = _probe_payloads(client, send, payloads_list, contexts, char_map, evade)
-        if confirmed_any or working:
-            pname = ".".join(str(k) for k in path)
-            f = _finding("GRAPHQL", action, pname, refs, char_map, working,
-                         resp.status_code, rbody, mk)
+        pname = ".".join(str(k) for k in path)
+        f = _build_finding(_probe_reflection(send, mk), "GRAPHQL", action, pname,
+                           mk, payloads_list, send, client, evade)
+        if f is not None:
             f["json_template"] = template
             f["json_path"] = list(path)
             if f["context"] in GRAPHQL_JSON_CONTEXTS:
@@ -423,6 +353,8 @@ def _dom_pass(client, urls):
         except Exception:
             continue
         hits = detect.dom_findings(mbody)
+        if not hits:
+            hits = detect.dom_findings_combined(mbody)
         for src in detect.script_srcs(mbody)[:12]:
             jsurl = urljoin(u, src)
             if urlsplit(jsurl).hostname != parts.hostname:
@@ -522,11 +454,11 @@ def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=Non
             elif kind == "JSON":
                 futures[pool.submit(scan_form, client, item["action"],
                                     item["fields"], payloads_list, blind, evade,
-                                    True, False)] = ("JSON", item)
+                                    True, False, item.get("values"))] = ("JSON", item)
             else:
                 futures[pool.submit(scan_form, client, item["action"],
                                     item["fields"], payloads_list, blind, evade,
-                                    False, multipart)] = ("POST", item)
+                                    False, multipart, item.get("values"))] = ("POST", item)
         for fut in cf.as_completed(futures):
             try:
                 finds, blind_sent = fut.result()

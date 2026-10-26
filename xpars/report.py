@@ -141,6 +141,8 @@ def render(result):
         lines.append("%s %s %s" % (tag, item.get("method", "GET"), item["url"]))
         lines.append("  severity: %s  (%s)" % (item.get("severity", "high"),
                                                item.get("how", "")))
+        if item.get("waf"):
+            lines.append("  waf     : %s" % item["waf"])
         lines.append("  param   : %s" % item["param"])
         ctxs = item.get("contexts") or [item.get("context")]
         lines.append("  baglam  : %s" % ", ".join(c for c in ctxs if c))

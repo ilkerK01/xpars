@@ -40,9 +40,10 @@ class _Parser(HTMLParser):
         if tag == "form":
             self._form = {"action": d.get("action", ""),
                           "method": (d.get("method") or "get").lower(),
-                          "fields": []}
+                          "fields": [], "values": {}}
         if tag in ("input", "textarea", "select") and self._form is not None and d.get("name"):
             self._form["fields"].append(d["name"])
+            self._form["values"][d["name"]] = d.get("value", "")
 
     def handle_endtag(self, tag):
         if tag == "script":
@@ -181,7 +182,8 @@ def discover(client, seeds, scope, depth=1, max_pages=60, threads=10,
                 elif form["method"] == "post" and forms_out is not None:
                     action = urljoin(url, form["action"] or url).split("#")[0]
                     if _in_scope(action, seed_hosts, seed_rdns, mode, scope):
-                        forms_out.append({"action": action, "fields": form["fields"]})
+                        forms_out.append({"action": action, "fields": form["fields"],
+                                          "values": form.get("values", {})})
             for frag in parser.inline:
                 for e in _js_endpoints(url, frag):
                     if _in_scope(e, seed_hosts, seed_rdns, mode, scope):

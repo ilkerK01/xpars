@@ -60,3 +60,34 @@ def test_waf_payload_block_then_evade(server):
 def test_waf_full_block_skipped(server):
     result = scanner.scan(_client(), [server + "/wafblock?q=1"], threads=2)
     assert all(f["param"] != "q" for f in result["findings"])
+
+
+def test_waf_post_evade(server):
+    from xpars import payloads
+    result = scanner.scan(_client(), [], threads=2, payloads_list=payloads.DEFAULT,
+                          post_forms=[{"action": server + "/wafpost", "fields": ["q"]}])
+    fs = [f for f in result["findings"] if f["param"] == "q"]
+    assert fs and fs[0].get("working_payloads")
+
+
+def test_csrf_value_preserved(server):
+    from xpars import payloads
+    result = scanner.scan(_client(), [], threads=2, payloads_list=payloads.DEFAULT,
+                          post_forms=[{"action": server + "/csrfpost",
+                                       "fields": ["q", "token"],
+                                       "values": {"token": "s3cr3t"}}])
+    assert any(f["param"] == "q" for f in result["findings"])
+
+
+def test_csrf_missing_value_not_flagged(server):
+    from xpars import payloads
+    result = scanner.scan(_client(), [], threads=2, payloads_list=payloads.DEFAULT,
+                          post_forms=[{"action": server + "/csrfpost",
+                                       "fields": ["q", "token"]}])
+    assert all(f["param"] != "q" for f in result["findings"])
+
+
+def test_dom_cross_block(server):
+    result = scanner.scan(_client(), [server + "/domsplit"], threads=2)
+    assert any("location.hash" in d["sources"] and "innerhtml" in d["sinks"]
+               for d in result["dom"])

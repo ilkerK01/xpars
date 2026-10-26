@@ -142,6 +142,15 @@ class VulnHandler(BaseHTTPRequestHandler):
                 self.wfile.write(data)
             else:
                 self._send("<html><body><div>" + v + "</div></body></html>")
+        elif path == "/domsplit":
+            self._send("<html><body><div id=o></div>"
+                       "<script>var h=location.hash.slice(1);</script>"
+                       "<script>document.getElementById('o').innerHTML=h;</script>"
+                       "</body></html>")
+        elif path == "/csrfform":
+            self._send('<html><body><form action="/csrfpost" method="post">'
+                       '<input type="hidden" name="token" value="s3cr3t">'
+                       '<input name="q"></form></body></html>')
         elif path == "/waf":
             data = b"<html><body>ok</body></html>"
             self.send_response(200)
@@ -248,6 +257,23 @@ class VulnHandler(BaseHTTPRequestHandler):
         elif self.path == "/guestbook":
             self.GUEST.append(q.get("msg", [""])[0])
             self._send("<html><body>ok</body></html>")
+        elif self.path == "/wafpost":
+            v = q.get("q", [""])[0]
+            if "<" in v and "'" in v and '"' in v:
+                data = b"<html>blocked</html>"
+                self.send_response(403)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self._send("<html><body><div>" + v + "</div></body></html>")
+        elif self.path == "/csrfpost":
+            if q.get("token", [""])[0] != "s3cr3t":
+                self._send("<html><body>denied</body></html>")
+            else:
+                v = q.get("q", [""])[0]
+                self._send("<html><body><div>" + v + "</div></body></html>")
         else:
             self._send("<html><body>ok</body></html>")
 

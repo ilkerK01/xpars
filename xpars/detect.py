@@ -270,6 +270,18 @@ def dom_findings_js(text):
     return []
 
 
+def dom_findings_combined(body):
+    blocks = SCRIPT_RE.findall(body)
+    if len(blocks) < 2:
+        return []
+    low = " ".join(blocks).lower()
+    srcs = [s for s in SOURCES if s in low]
+    snks = [s for s in SINKS if s in low]
+    if srcs and snks:
+        return [{"sources": sorted(set(srcs)), "sinks": sorted(set(snks))}]
+    return []
+
+
 SCRIPT_SRC_RE = re.compile(r"<script[^>]+src\s*=\s*[\"']?([^\"'> ]+)", re.IGNORECASE)
 
 
