@@ -5,9 +5,9 @@ import random
 import sys
 from urllib.parse import parse_qsl, urlsplit
 
-from . import (blind, crawl, discover as discover_mod, http, params as paramlib,
-               passive, payloads, refine, report, scanner, scope, stored,
-               verify, waf)
+from . import (blind, confirm, crawl, discover as discover_mod, http,
+               params as paramlib, passive, payloads, refine, report, scanner,
+               scope, stored, verify, waf)
 
 
 def _dedup_forms(forms):
@@ -77,6 +77,11 @@ def build_parser():
     p.add_argument("--aggressive-dedup", dest="aggressive_dedup", action="store_true")
     p.add_argument("--no-dedup", dest="no_dedup", action="store_true")
     p.add_argument("--verify", action="store_true")
+    p.add_argument("--confirm", action="store_true",
+                   help="tarayicida yurutup FP'siz dogrula (marker-atfi)")
+    p.add_argument("--confirmed-only", dest="confirmed_only", action="store_true",
+                   help="sadece tarayicida dogrulanan bulgulari raporla")
+    p.add_argument("--confirm-timeout", dest="confirm_timeout", type=float, default=8.0)
     p.add_argument("--insecure", action="store_true")
     p.add_argument("--html", dest="html_output")
     p.add_argument("--izin", action="store_true")
@@ -335,12 +340,22 @@ def main(argv=None):
         for f in result["findings"]:
             if refine.host(f.get("url", "")) in csp_hosts:
                 f["csp"] = "blocks-inline"
-    if args.verify:
-        vf = verify.verify_findings(result["findings"])
-        vd = verify.verify_dom(result["dom"])
-        vf["dom_verified"] = vd.get("verified", 0)
-        vf["dom_candidates"] = vd.get("candidates", 0)
-        result["verify"] = vf
+    if args.confirm or args.verify:
+        if not confirm.available():
+            print("[dogrulama] Playwright kurulu degil - kesinlik (FP'siz) modu "
+                  "atlandi. Kurulum: py -3.11 -m pip install playwright && "
+                  "py -3.11 -m playwright install chromium")
+        csum = confirm.run(result["findings"], result["dom"],
+                           timeout=args.confirm_timeout)
+        result["confirm"] = csum
+        if csum.get("supported"):
+            print("[dogrulama] %d/%d bulgu, %d/%d DOM adayi tarayicida "
+                  "yurutulerek dogrulandi (FP'siz)"
+                  % (csum["confirmed"], csum["candidates"],
+                     csum["dom_confirmed"], csum["dom_candidates"]))
+        if args.confirmed_only:
+            result["findings"] = [f for f in result["findings"] if f.get("verified")]
+            result["dom"] = [d for d in result["dom"] if d.get("verified")]
     print(report.render(result))
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:

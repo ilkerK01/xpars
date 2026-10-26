@@ -45,12 +45,14 @@ def test_stored_safe_no_fp(server):
     assert finds == []
 
 
-def test_dom_pass_hash_gets_payload(server):
+def test_dom_pass_hash_is_lead_without_fabricated_poc(server):
     result = scanner.scan(_client(), [server + "/dom"])
     hash_doms = [d for d in result["dom"] if "location.hash" in d.get("sources", [])]
     assert hash_doms
-    assert hash_doms[0].get("payload")
-    assert "#" in hash_doms[0].get("poc", "")
+    assert hash_doms[0].get("verified") is False
+    assert hash_doms[0].get("severity") == "info"
+    assert "payload" not in hash_doms[0]
+    assert "poc" not in hash_doms[0]
 
 
 def test_dom_pass_dedups_pages(server):

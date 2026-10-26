@@ -106,16 +106,36 @@ def render(result):
         else:
             lines.append("[dogrulama] Playwright kurulu degil (atlandi, %d aday)"
                          % v.get("candidates", 0))
+    c = result.get("confirm")
+    if c is not None:
+        if c.get("supported"):
+            lines.append("[kesinlik] tarayicida yurutulerek %d/%d bulgu + %d/%d DOM "
+                         "adayi DOGRULANDI (FP'siz, marker-atfi)"
+                         % (c.get("confirmed", 0), c.get("candidates", 0),
+                            c.get("dom_confirmed", 0), c.get("dom_candidates", 0)))
+        else:
+            lines.append("[kesinlik] Playwright yok - dogrulama atlandi; asagidaki "
+                         "bulgular DOGRULANMAMIS adaylardir")
     disc = result.get("discovered") or []
     disc_params = sum(len(d.get("params", [])) for d in disc)
-    lines.append("bulgu: %d  dom: %d  blind: %d  kesif: %d" % (
+    nconf = len([f for f in result.get("findings", []) if f.get("verified")])
+    ndconf = len([d for d in result.get("dom", []) if d.get("verified")])
+    summary = "bulgu: %d  dom: %d  blind: %d  kesif: %d" % (
         len(result["findings"]), len(result["dom"]),
-        len(result["blind_sent"]), disc_params))
+        len(result["blind_sent"]), disc_params)
+    if c is not None:
+        summary += "  | DOGRULANDI -> bulgu: %d  dom: %d" % (nconf, ndconf)
+    lines.append(summary)
     for d in disc:
         lines.append("")
         lines.append("[KESIF-PARAM] %s (%s)" % (d.get("url", ""), d.get("method", "GET")))
         lines.append("  parametre: %s" % ", ".join(d.get("params", [])))
-    for item in _sorted_findings(result):
+    allf = _sorted_findings(result)
+    confirmed = [f for f in allf if f.get("verified")]
+    candidates = [f for f in allf if not f.get("verified")]
+    ran_confirm = result.get("confirm") is not None
+
+    def emit_finding(item):
         lines.append("")
         tag = "[XSS-DOGRULANDI]" if item.get("verified") else "[XSS]"
         lines.append("%s %s %s" % (tag, item.get("method", "GET"), item["url"]))
@@ -127,7 +147,7 @@ def render(result):
         if item.get("char_map"):
             lines.append("  ham-kar : %s" % item["char_map"])
         if item.get("csp"):
-            lines.append("  csp     : %s (execution icin --verify ile teyit et)" % item["csp"])
+            lines.append("  csp     : %s (execution icin --confirm ile teyit et)" % item["csp"])
         lines.append("  payload : %s" % (item.get("payload") or ""))
         working = item.get("working_payloads") or []
         if working:
@@ -136,18 +156,51 @@ def render(result):
                 lines.append("    %s" % p)
         lines.append("  kanit   : %s" % (item.get("evidence", "")[:120]))
         lines.append("  poc     : %s" % poc(item))
-    for d in result["dom"]:
+
+    if confirmed:
         lines.append("")
-        tag = "[DOM-DOGRULANDI]" if d.get("verified") else "[DOM]"
-        lines.append("%s %s" % (tag, d["url"]))
-        lines.append("  kaynak  : %s" % ", ".join(d["sources"]))
-        lines.append("  sink    : %s" % ", ".join(d["sinks"]))
-        if d.get("script"):
-            lines.append("  script  : %s" % d["script"])
-        if d.get("payload"):
-            lines.append("  payload : %s" % d["payload"])
-        if d.get("poc"):
-            lines.append("  poc     : %s" % d["poc"])
+        lines.append("== DOGRULANDI: %d bulgu (tarayicida yurutuldu, FP'siz) =="
+                     % len(confirmed))
+        for item in confirmed:
+            emit_finding(item)
+    if candidates:
+        if confirmed or ran_confirm:
+            lines.append("")
+            note = "dogrulanamadi" if ran_confirm else "DOGRULANMADI -> --confirm ile teyit et"
+            lines.append("== ADAY: %d bulgu (%s) ==" % (len(candidates), note))
+        for item in candidates:
+            emit_finding(item)
+
+    dom = result.get("dom", [])
+    dom_conf = [d for d in dom if d.get("verified")]
+    dom_lead = [d for d in dom if not d.get("verified")]
+    if dom_conf:
+        lines.append("")
+        lines.append("== DOM DOGRULANDI: %d (tarayicida yurutuldu) ==" % len(dom_conf))
+        for d in dom_conf:
+            lines.append("")
+            lines.append("[DOM-DOGRULANDI] %s" % d["url"])
+            lines.append("  kaynak  : %s" % ", ".join(d.get("sources", [])))
+            lines.append("  sink    : %s" % ", ".join(d.get("sinks", [])))
+            if d.get("verified_via"):
+                lines.append("  kanal   : %s" % d["verified_via"])
+            if d.get("script"):
+                lines.append("  script  : %s" % d["script"])
+            if d.get("payload"):
+                lines.append("  payload : %s" % d["payload"])
+            if d.get("poc"):
+                lines.append("  poc     : %s" % d["poc"])
+    if dom_lead:
+        lines.append("")
+        lines.append("== DOM IPUCU: %d (kod ici kaynak->sink, DOGRULANMADI, FP "
+                     "olabilir; --confirm ile teyit et) ==" % len(dom_lead))
+        for d in dom_lead:
+            lines.append("")
+            lines.append("[DOM-IPUCU] %s" % d["url"])
+            lines.append("  kaynak  : %s" % ", ".join(d.get("sources", [])))
+            lines.append("  sink    : %s" % ", ".join(d.get("sinks", [])))
+            if d.get("script"):
+                lines.append("  script  : %s" % d["script"])
     for b in result["blind_sent"]:
         lines.append("")
         lines.append("[BLIND gonderildi] %s param=%s" % (b["url"], b["param"]))

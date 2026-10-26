@@ -410,13 +410,8 @@ def _dom_pass(client, urls):
             h = dict(h)
             h["url"] = u
             h["verified"] = False
-            if any(s in DOM_HASH_SOURCES for s in h.get("sources", [])):
-                pay = "<img src=x onerror=alert(1)>"
-                h["payload"] = pay
-                h["poc"] = u.split("#")[0] + "#" + pay
-                h["severity"] = "high"
-            else:
-                h["severity"] = "medium"
+            h["severity"] = "info"
+            h["how"] = "static-sink-lead"
             out.append(h)
     return out
 
