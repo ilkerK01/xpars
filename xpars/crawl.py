@@ -58,8 +58,10 @@ class _Parser(HTMLParser):
 
 
 def _form_url(page_url, form):
-    action = urljoin(page_url, form["action"] or page_url)
-    parts = urlsplit(action)
+    action = refine.safe_join(page_url, form["action"] or page_url)
+    if not action:
+        return None
+    parts = refine.safe_split(action)
     query = urlencode([(f, "1") for f in form["fields"]])
     return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
 
@@ -73,12 +75,14 @@ def _js_endpoints(base, text):
             if m.startswith("http"):
                 out.add(m)
             elif m.startswith("/"):
-                out.add(urljoin(base, m))
+                j = refine.safe_join(base, m)
+                if j:
+                    out.add(j)
     return out
 
 
 def _is_page(url):
-    return refine._ext(urlsplit(url).path) in CRAWLABLE_EXT
+    return refine._ext(refine.safe_split(url).path) in CRAWLABLE_EXT
 
 
 def _in_scope(url, seed_hosts, seed_rdns, mode, scope):
@@ -110,7 +114,7 @@ def _fetch_many(client, urls, threads):
 
 def _robots_sitemap(client, seed, seed_hosts, seed_rdns, mode, scope):
     out = set()
-    parts = urlsplit(seed)
+    parts = refine.safe_split(seed)
     base = "%s://%s" % (parts.scheme, parts.netloc)
     robots = _safe_get(client, base + "/robots.txt")
     if robots is not None:
@@ -119,8 +123,8 @@ def _robots_sitemap(client, seed, seed_hosts, seed_rdns, mode, scope):
             if low.startswith(("disallow:", "allow:")):
                 path = line.split(":", 1)[1].strip()
                 if path.startswith("/"):
-                    cand = urljoin(base, path)
-                    if _in_scope(cand, seed_hosts, seed_rdns, mode, scope):
+                    cand = refine.safe_join(base, path)
+                    if cand and _in_scope(cand, seed_hosts, seed_rdns, mode, scope):
                         out.add(cand)
             elif low.startswith("sitemap:"):
                 sm = line.split(":", 1)[1].strip()
@@ -169,11 +173,12 @@ def _crawl_host(client, seeds, scope, seed_hosts, seed_rdns, depth, max_pages,
                     continue
                 if form["method"] == "get":
                     turl = _form_url(url, form)
-                    if _in_scope(turl, seed_hosts, seed_rdns, mode, scope):
+                    if turl and _in_scope(turl, seed_hosts, seed_rdns, mode, scope):
                         endpoints.add(turl)
                 elif form["method"] == "post" and forms_out is not None:
-                    action = urljoin(url, form["action"] or url).split("#")[0]
-                    if _in_scope(action, seed_hosts, seed_rdns, mode, scope):
+                    action = refine.safe_join(url, form["action"] or url)
+                    action = action.split("#")[0] if action else None
+                    if action and _in_scope(action, seed_hosts, seed_rdns, mode, scope):
                         forms_out.append({"action": action, "fields": form["fields"],
                                           "values": form.get("values", {})})
             for frag in parser.inline:
@@ -181,7 +186,10 @@ def _crawl_host(client, seeds, scope, seed_hosts, seed_rdns, depth, max_pages,
                     if _in_scope(e, seed_hosts, seed_rdns, mode, scope):
                         endpoints.add(e)
             for href in parser.links:
-                absu = urljoin(url, href).split("#")[0]
+                absu = refine.safe_join(url, href)
+                if not absu:
+                    continue
+                absu = absu.split("#")[0]
                 if not absu.startswith(("http://", "https://")):
                     continue
                 if not _in_scope(absu, seed_hosts, seed_rdns, mode, scope):
@@ -191,7 +199,10 @@ def _crawl_host(client, seeds, scope, seed_hosts, seed_rdns, depth, max_pages,
                     frontier.add(absu)
             if include_js:
                 for src in parser.scripts:
-                    jsu = urljoin(url, src).split("#")[0]
+                    jsu = refine.safe_join(url, src)
+                    if not jsu:
+                        continue
+                    jsu = jsu.split("#")[0]
                     if not _in_scope(jsu, seed_hosts, seed_rdns, mode, scope) or jsu in visited:
                         continue
                     visited.add(jsu)
@@ -225,7 +236,10 @@ def discover(client, seeds, scope, depth=1, max_pages=60, threads=10,
                 on_progress(i, total, host)
             except Exception:
                 pass
-        endpoints |= _crawl_host(client, groups[host], scope, seed_hosts, seed_rdns,
-                                 depth, max_pages, threads, mode, include_js,
-                                 robots, forms_out)
+        try:
+            endpoints |= _crawl_host(client, groups[host], scope, seed_hosts, seed_rdns,
+                                     depth, max_pages, threads, mode, include_js,
+                                     robots, forms_out)
+        except Exception:
+            continue
     return sorted(endpoints)

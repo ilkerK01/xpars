@@ -6,7 +6,10 @@ DENY_DEFAULT = ("europa.eu", "unesco.org")
 
 
 def host_of(url):
-    return (urlsplit(url).hostname or "").lower()
+    try:
+        return (urlsplit(url).hostname or "").lower()
+    except Exception:
+        return ""
 
 
 def _match(host, patterns):

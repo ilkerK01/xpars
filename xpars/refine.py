@@ -1,16 +1,39 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import (SplitResult, parse_qsl, urlencode, urljoin, urlsplit,
+                          urlunsplit)
 
 STATIC_EXT = {"css", "png", "jpg", "jpeg", "gif", "svg", "ico", "woff", "woff2",
               "ttf", "eot", "pdf", "zip", "rar", "gz", "mp4", "webm", "webp",
               "map", "bmp", "mp3", "avi", "mov", "otf"}
 NUM_RE = re.compile(r"^\d+$")
+_EMPTY_SPLIT = SplitResult("", "", "", "", "")
+
+
+def safe_split(url):
+    try:
+        return urlsplit(url)
+    except Exception:
+        return _EMPTY_SPLIT
+
+
+def safe_join(base, ref):
+    try:
+        return urljoin(base, ref)
+    except Exception:
+        return None
+
+
+def safe_port(parts):
+    try:
+        return parts.port
+    except Exception:
+        return None
 
 
 def host(url):
-    return (urlsplit(url).hostname or "").lower()
+    return (safe_split(url).hostname or "").lower()
 
 
 def registered_domain(h):
@@ -24,10 +47,10 @@ def _ext(path):
 
 
 def normalize(url):
-    parts = urlsplit(url)
+    parts = safe_split(url)
     scheme = (parts.scheme or "http").lower()
     h = (parts.hostname or "").lower()
-    port = parts.port
+    port = safe_port(parts)
     netloc = h
     if port and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
         netloc = "%s:%d" % (h, port)

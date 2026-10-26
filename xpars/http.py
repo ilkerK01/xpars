@@ -70,7 +70,10 @@ class Client:
     def _throttle(self, url):
         if self.min_interval <= 0:
             return
-        host = urlsplit(url).hostname or ""
+        try:
+            host = urlsplit(url).hostname or ""
+        except Exception:
+            host = ""
         while True:
             with self._rlock:
                 now = time.monotonic()

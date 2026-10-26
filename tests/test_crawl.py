@@ -61,6 +61,36 @@ def test_discover_per_host_budget(monkeypatch):
     assert len(out) == 2
 
 
+def test_safe_url_helpers_never_raise():
+    from xpars import refine
+    bad = "http://[notipv6]/x"
+    assert refine.safe_split(bad).hostname in (None, "")
+    assert refine.host(bad) == ""
+    refine.normalize(bad)
+    refine.normalize("http://h:notaport/")
+    assert isinstance(refine.safe_join("http://a.test/", "/ok"), str)
+    refine.safe_join("http://a.test/", bad)
+
+
+def test_scope_handles_bad_url():
+    bad = "http://[notipv6]/x"
+    assert scope.host_of(bad) == ""
+    assert scope.Scope().permitted(bad) is False
+    assert crawl._in_scope(bad, set(), set(), "strict", scope.Scope()) is False
+
+
+def test_dom_pass_handles_bad_url():
+    class _R:
+        text = "<html><a href=\"http://[notipv6]/y\">x</a></html>"
+
+    class _Stub:
+        def get(self, u):
+            return _R()
+
+    out = scanner._dom_pass(_Stub(), ["http://[notipv6]/x", "http://ok.test/"])
+    assert isinstance(out, list)
+
+
 def test_client_verbose_logs_requests(server, capsys):
     c = http.Client(timeout=5, verbose=True)
     c.get(server + "/reflect?q=1")

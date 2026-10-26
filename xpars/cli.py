@@ -241,11 +241,16 @@ def main(argv=None):
                 print("[pasif] %s (%s) -> %d url" % (d, ",".join(psources), len(found)))
         if args.auto or args.crawl is not None:
             depth = args.crawl if args.crawl is not None else (2 if args.auto else 1)
-            collected += crawl.discover(client, permitted, sc, depth=depth,
-                                        max_pages=args.max_pages, threads=args.threads,
-                                        mode=mode, forms_out=post_forms,
-                                        on_progress=(None if args.verbose
-                                                     else _crawl_progress))
+            try:
+                collected += crawl.discover(client, permitted, sc, depth=depth,
+                                            max_pages=args.max_pages, threads=args.threads,
+                                            mode=mode, forms_out=post_forms,
+                                            on_progress=(None if args.verbose
+                                                         else _crawl_progress))
+            except Exception as exc:
+                sys.stderr.write("[uyari] crawl hatasi, tohumlarla devam: %s\n"
+                                 % type(exc).__name__)
+                collected += list(permitted)
         collected = [u for u in collected if sc.permitted(u)]
         full = refine.refine(collected, params_only=False,
                              dedup=not args.no_dedup, collapse_numbers=args.aggressive_dedup)
@@ -318,7 +323,7 @@ def main(argv=None):
         for u in list(targets) + list(permitted):
             if not sc.permitted(u):
                 continue
-            pkey = (refine.host(u), urlsplit(u).path)
+            pkey = (refine.host(u), refine.safe_split(u).path)
             if pkey in seen_paths:
                 continue
             seen_paths.add(pkey)
@@ -426,8 +431,15 @@ def main(argv=None):
             print("[dogrulama] Playwright kurulu degil - kesinlik (FP'siz) modu "
                   "atlandi. Kurulum: py -3.11 -m pip install playwright && "
                   "py -3.11 -m playwright install chromium")
-        csum = confirm.run(result["findings"], result["dom"],
-                           timeout=args.confirm_timeout)
+        try:
+            csum = confirm.run(result["findings"], result["dom"],
+                               timeout=args.confirm_timeout)
+        except Exception as exc:
+            sys.stderr.write("[uyari] dogrulama hatasi, dogrulanmamis raporlaniyor: %s\n"
+                             % type(exc).__name__)
+            csum = {"supported": False, "confirmed": 0,
+                    "candidates": len(result["findings"]),
+                    "dom_confirmed": 0, "dom_candidates": len(result["dom"])}
         result["confirm"] = csum
         if csum.get("supported"):
             print("[dogrulama] %d/%d bulgu, %d/%d DOM adayi tarayicida "
@@ -437,16 +449,25 @@ def main(argv=None):
         if args.confirmed_only:
             result["findings"] = [f for f in result["findings"] if f.get("verified")]
             result["dom"] = [d for d in result["dom"] if d.get("verified")]
-    print(report.render(result))
+    try:
+        print(report.render(result))
+    except Exception:
+        pass
     if args.output:
-        with open(args.output, "w", encoding="utf-8") as f:
-            f.write(report.to_json(result))
-        print("\n[json] %s" % args.output)
+        try:
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write(report.to_json(result))
+            print("\n[json] %s" % args.output)
+        except Exception as exc:
+            sys.stderr.write("[uyari] json yazilamadi: %s\n" % type(exc).__name__)
     if args.html_output:
-        target = permitted[0] if permitted else "scan"
-        with open(args.html_output, "w", encoding="utf-8") as f:
-            f.write(report.to_html(result, target))
-        print("[html] %s" % args.html_output)
+        try:
+            target = permitted[0] if permitted else "scan"
+            with open(args.html_output, "w", encoding="utf-8") as f:
+                f.write(report.to_html(result, target))
+            print("[html] %s" % args.html_output)
+        except Exception as exc:
+            sys.stderr.write("[uyari] html yazilamadi: %s\n" % type(exc).__name__)
     if args.fail_on_finding and result["findings"]:
         return 3
     return 0

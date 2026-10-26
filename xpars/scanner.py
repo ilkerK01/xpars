@@ -5,7 +5,7 @@ import threading
 from urllib.parse import quote, urljoin, urlsplit
 
 from . import crlf as crlf_mod
-from . import detect, params, payloads, waf
+from . import detect, params, payloads, refine, waf
 
 DOM_HASH_SOURCES = ("location.hash", "location.href", "document.url",
                     "document.documenturi")
@@ -343,7 +343,8 @@ def _dom_pass(client, urls):
     seen_pages = set()
     seen_js = set()
     for u in urls:
-        parts = urlsplit(u)
+      try:
+        parts = refine.safe_split(u)
         key = (parts.hostname, parts.path)
         if key in seen_pages:
             continue
@@ -358,8 +359,8 @@ def _dom_pass(client, urls):
         hits = hits + detect.dom_inline_findings(mbody)
         hits = hits + detect.dom_taint_findings(" ; ".join(detect.SCRIPT_RE.findall(mbody)))
         for src in detect.script_srcs(mbody)[:12]:
-            jsurl = urljoin(u, src)
-            if urlsplit(jsurl).hostname != parts.hostname:
+            jsurl = refine.safe_join(u, src)
+            if not jsurl or refine.safe_split(jsurl).hostname != parts.hostname:
                 continue
             if jsurl in seen_js:
                 continue
@@ -392,11 +393,13 @@ def _dom_pass(client, urls):
             h["severity"] = "info"
             h["how"] = h.get("how") or "static-sink-lead"
             out.append(h)
+      except Exception:
+          continue
     return out
 
 
 def _host(url):
-    return (urlsplit(url).hostname or "").lower()
+    return (refine.safe_split(url).hostname or "").lower()
 
 
 def dedup_findings(findings):
@@ -481,6 +484,9 @@ def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=Non
                 continue
             result["findings"].extend(finds)
             result["blind_sent"].extend(blind_sent)
-    result["dom"] = _dom_pass(client, dom_urls if dom_urls is not None else list(urls))
+    try:
+        result["dom"] = _dom_pass(client, dom_urls if dom_urls is not None else list(urls))
+    except Exception:
+        result["dom"] = []
     result["findings"] = dedup_findings(result["findings"])
     return result
