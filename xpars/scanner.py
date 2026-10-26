@@ -69,23 +69,19 @@ def _probe_payloads(client, send, payloads_list, contexts, char_map, evade):
     return working
 
 
+WAF_EVADE_CONTEXTS = ("html", "attribute", "script", "uri")
+
+
+def _synthetic_refs(contexts):
+    return [{"context": c, "confirmed": False, "index": 0, "score": 0}
+            for c in contexts]
+
+
 def scan_url(client, url, payloads_list=None, blind=None, evade=False):
     findings = []
     blind_sent = []
     for name in params.injectable(url):
         mk = payloads.marker()
-        probe = detect.probe_value(mk)
-        try:
-            resp = client.get(params.set_param(url, name, probe))
-        except Exception:
-            continue
-        if waf.blocked(resp):
-            continue
-        ct = resp.headers.get("Content-Type", "")
-        refs = detect.reflections(resp.text, mk, ct)
-        char_map = detect.char_survival(resp.text, mk)
-        confirmed_any = any(r["confirmed"] for r in refs)
-        contexts = _contexts_from(refs)
 
         def send(p, _n=name):
             try:
@@ -93,18 +89,54 @@ def scan_url(client, url, payloads_list=None, blind=None, evade=False):
             except Exception:
                 return None
 
-        working = []
-        if refs:
-            working = _probe_payloads(client, send, payloads_list, contexts, char_map, evade)
-        if confirmed_any or working:
-            findings.append(_finding("GET", url, name, refs, char_map, working,
-                                     resp.status_code, resp.text, mk))
-        if blind:
-            try:
-                client.get(params.set_param(url, name, blind))
+        base = send(mk)
+        if base is None or waf.blocked(base):
+            if blind and send(blind) is not None:
                 blind_sent.append({"url": url, "param": name})
+            continue
+        try:
+            bbody = base.text
+        except Exception:
+            continue
+        reachable_reflect = mk in bbody
+        probe = detect.probe_value(mk)
+        presp = send(probe)
+        waf_on_payload = presp is not None and waf.blocked(presp)
+        finding = None
+        if presp is not None and not waf_on_payload:
+            try:
+                body = presp.text
             except Exception:
-                pass
+                body = bbody
+            refs = detect.reflections(body, mk, presp.headers.get("Content-Type", ""))
+            char_map = detect.char_survival(body, mk)
+            confirmed_any = any(r["confirmed"] for r in refs)
+            contexts = _contexts_from(refs)
+            working = _probe_payloads(client, send, payloads_list, contexts,
+                                      char_map, evade) if refs else []
+            if confirmed_any or working:
+                finding = _finding("GET", url, name, refs, char_map, working,
+                                   presp.status_code, body, mk)
+        elif reachable_reflect:
+            char_map = {c: False for c in detect.PROBE_TAIL}
+            contexts = list(WAF_EVADE_CONTEXTS)
+            working = _probe_payloads(client, send, payloads_list, contexts,
+                                      char_map, True)
+            refs = _synthetic_refs(contexts)
+            status = getattr(presp, "status_code", base.status_code)
+            finding = _finding("GET", url, name, refs, char_map, working,
+                               status, bbody, mk)
+            finding["waf"] = "payload-blocked"
+            if working:
+                finding["how"] = "waf-evaded"
+                finding["severity"] = "high"
+            else:
+                finding["how"] = "reflected-behind-waf"
+                finding["severity"] = "low"
+        if finding is not None:
+            findings.append(finding)
+        if blind and send(blind) is not None:
+            blind_sent.append({"url": url, "param": name})
     return findings, blind_sent
 
 

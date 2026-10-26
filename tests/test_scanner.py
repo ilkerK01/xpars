@@ -46,3 +46,17 @@ def test_safe_no_working_payload(server):
     result = scanner.scan(_client(), [server + "/safe?q=1"], threads=2,
                           payloads_list=payloads.DEFAULT)
     assert result["findings"] == []
+
+
+def test_waf_payload_block_then_evade(server):
+    from xpars import payloads
+    result = scanner.scan(_client(), [server + "/wafparam?q=1"], threads=2,
+                          payloads_list=payloads.DEFAULT)
+    fs = [f for f in result["findings"] if f["param"] == "q"]
+    assert fs and fs[0].get("working_payloads")
+    assert fs[0].get("waf") == "payload-blocked"
+
+
+def test_waf_full_block_skipped(server):
+    result = scanner.scan(_client(), [server + "/wafblock?q=1"], threads=2)
+    assert all(f["param"] != "q" for f in result["findings"])

@@ -131,6 +131,17 @@ class VulnHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+        elif path == "/wafparam":
+            v = q.get("q", [""])[0]
+            if "<" in v and "'" in v and '"' in v:
+                data = b"<html>blocked</html>"
+                self.send_response(403)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self._send("<html><body><div>" + v + "</div></body></html>")
         elif path == "/waf":
             data = b"<html><body>ok</body></html>"
             self.send_response(200)

@@ -9,7 +9,8 @@ SINKS = ("innerhtml", "outerhtml", "document.write", "insertadjacenthtml",
          "setattribute", ".src", ".href", "location.assign", "location.replace",
          "location.href", "window.open", "range.createcontextualfragment",
          "jquery", "$(", ".after(", ".before(", ".append(", ".prepend(",
-         "domparser", "srcdoc", "new function")
+         "domparser", "srcdoc", "new function", "dangerouslysetinnerhtml",
+         "bypasssecuritytrust", "v-html", "ng-bind-html", "trustashtml")
 SOURCES = ("location.hash", "location.search", "location.href", "document.url",
            "document.documenturi", "window.name", "document.referrer",
            "location.pathname", "location)", "document.location",

@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 import requests
 
-MAX_BYTES = 3_000_000
+MAX_BYTES = 8_000_000
 
 
 def _retry_after(resp, attempt):
