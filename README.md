@@ -119,9 +119,11 @@ Genişletilmiş yetenekler:
   - `--discover-chunk N`: başlangıç öbek boyu (GET'te URL uzunluğuna göre otomatik kısılır).
   - `--discover-method GET|POST`: keşif isteğinin yöntemi (POST gövdede dener).
   - `--discover-endpoints N`: kaç ayrı uçta keşif yapılacağı (yol başına tekilleştirilir).
-- `--passive-sources wayback,urlscan,otx,crtsh,hackertarget`: pasif kaynak seçimi.
-  `--auto` varsayılan olarak wayback + urlscan + otx kullanır; `--subdomains` ile crt.sh ve
-  hackertarget eklenir (hepsi anahtarsız).
+- `--passive`: pasif URL toplama (Wayback/urlscan/OTX). Ayrı bir bayraktır; `--auto`
+  artık yalnızca crawl yapar, pasif için `--passive` eklenir.
+  - `--passive-sources wayback,urlscan,otx,crtsh,hackertarget`: kaynak seçimi.
+    Varsayılan wayback + urlscan + otx; `--subdomains` ile crt.sh ve hackertarget
+    eklenir (hepsi anahtarsız).
 - WAF/CDN parmak izi her host icin otomatik calisir (Cloudflare, Akamai, Imperva, Sucuri,
   PerimeterX, F5, Barracuda, CloudFront, DataDome...). `--no-waf` ile kapatilir.
 - `--stop-on-confirm`: bir host doğrulanınca o host için kalan hedefleri atla (varsayılan

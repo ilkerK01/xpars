@@ -133,7 +133,7 @@ def build_parser():
     p.add_argument("--stop-on-confirm", dest="stop_on_confirm", action="store_true")
     p.add_argument("--crawl", nargs="?", const=1, type=int, default=None)
     p.add_argument("--auto", action="store_true")
-    p.add_argument("--no-passive", dest="passive", action="store_false")
+    p.add_argument("--passive", action="store_true")
     p.add_argument("--passive-sources", dest="passive_sources")
     p.add_argument("--no-waf", dest="waf", action="store_false")
     p.add_argument("--subdomains", action="store_true")
@@ -151,7 +151,7 @@ def build_parser():
     p.add_argument("--html", dest="html_output")
     p.add_argument("-o", "--output", dest="output")
     p.add_argument("--version", action="version", version="xpars 0.1.0")
-    p.set_defaults(passive=True, waf=True)
+    p.set_defaults(waf=True)
     return p
 
 
@@ -201,16 +201,16 @@ def main(argv=None):
                          verify=not args.insecure, rps=args.rps)
     mode = "subdomains" if args.subdomains else "strict"
     post_forms = []
-    if args.auto and not args.scope_allow:
+    if (args.auto or args.passive) and not args.scope_allow:
         hosts = sorted({refine.host(u) for u in permitted})
         allow = (sorted({refine.registered_domain(h) for h in hosts})
                  if args.subdomains else hosts)
         sc = scope.Scope(allow=allow,
                          deny=(args.scope_deny.split(",") if args.scope_deny else None))
     all_endpoints = list(permitted)
-    if args.auto or args.crawl is not None:
+    if args.auto or args.crawl is not None or args.passive:
         collected = []
-        if args.auto and args.passive:
+        if args.passive:
             if args.passive_sources:
                 psources = [s.strip() for s in args.passive_sources.split(",") if s.strip()]
             else:
@@ -221,10 +221,11 @@ def main(argv=None):
                 found = passive.gather(d, subdomains=args.subdomains, sources=psources)
                 collected += found
                 print("[pasif] %s (%s) -> %d url" % (d, ",".join(psources), len(found)))
-        depth = args.crawl if args.crawl is not None else (2 if args.auto else 1)
-        collected += crawl.discover(client, permitted, sc, depth=depth,
-                                    max_pages=args.max_pages, threads=args.threads,
-                                    mode=mode, forms_out=post_forms)
+        if args.auto or args.crawl is not None:
+            depth = args.crawl if args.crawl is not None else (2 if args.auto else 1)
+            collected += crawl.discover(client, permitted, sc, depth=depth,
+                                        max_pages=args.max_pages, threads=args.threads,
+                                        mode=mode, forms_out=post_forms)
         collected = [u for u in collected if sc.permitted(u)]
         full = refine.refine(collected, params_only=False,
                              dedup=not args.no_dedup, collapse_numbers=args.aggressive_dedup)
@@ -333,7 +334,7 @@ def main(argv=None):
         print("[payload] tam liste: %d payload" % len(payload_list))
     else:
         payload_list = payloads.load(args.payloads_file)
-    if args.auto or args.crawl is not None:
+    if args.auto or args.crawl is not None or args.passive:
         dom_list = list(all_endpoints)
         if args.header_scan or args.path_scan:
             get_scan_list = list(all_endpoints)
@@ -356,7 +357,7 @@ def main(argv=None):
             extra += scanner.scan_headers(client, u, payload_list, args.evade)
         result["findings"] = scanner.dedup_findings(result["findings"] + extra)
     if args.stored:
-        if args.auto or args.crawl is not None:
+        if args.auto or args.crawl is not None or args.passive:
             pages = list(all_endpoints)
         else:
             pages = list(permitted)
