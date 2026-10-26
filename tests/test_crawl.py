@@ -61,6 +61,14 @@ def test_discover_per_host_budget(monkeypatch):
     assert len(out) == 2
 
 
+def test_client_verbose_logs_requests(server, capsys):
+    c = http.Client(timeout=5, verbose=True)
+    c.get(server + "/reflect?q=1")
+    err = capsys.readouterr().err
+    assert "[req]" in err
+    assert "GET" in err
+
+
 def test_cli_auto_pipeline(server, capsys):
     from xpars import cli
     host = server.replace("http://", "")

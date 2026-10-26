@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from urllib.parse import urlsplit
@@ -22,11 +23,12 @@ def _retry_after(resp, attempt):
 class Client:
     def __init__(self, timeout=10.0, delay=0.0, headers=None, cookie=None,
                  user_agent=None, retries=1, proxy=None, verify=True,
-                 max_bytes=MAX_BYTES, rps=0.0):
+                 max_bytes=MAX_BYTES, rps=0.0, verbose=False):
         self.timeout = timeout
         self.delay = delay
         self.retries = retries
         self.max_bytes = max_bytes
+        self.verbose = verbose
         self.min_interval = (1.0 / rps) if rps and rps > 0 else 0.0
         self._host_last = {}
         self._rlock = threading.Lock()
@@ -50,6 +52,20 @@ class Client:
         if raw is not None:
             resp._content = raw[:self.max_bytes]
             resp._content_consumed = True
+
+    def _log(self, method, url, status):
+        if not self.verbose:
+            return
+        try:
+            u = url if len(url) <= 180 else url[:177] + "..."
+            line = "[req] %-4s %s -> %s\n" % (method, u, status)
+            try:
+                sys.stderr.write(line)
+            except UnicodeEncodeError:
+                sys.stderr.write(line.encode("ascii", "replace").decode("ascii"))
+            sys.stderr.flush()
+        except Exception:
+            pass
 
     def _throttle(self, url):
         if self.min_interval <= 0:
@@ -75,9 +91,11 @@ class Client:
                                             allow_redirects=True, stream=True)
             except Exception as exc:
                 last = exc
+                self._log(method, url, "err: " + type(exc).__name__)
                 continue
             if resp.status_code in (429, 502, 503, 504) and attempt < self.retries:
                 wait = _retry_after(resp, attempt)
+                self._log(method, url, "%d retry" % resp.status_code)
                 try:
                     resp.close()
                 except Exception:
@@ -86,6 +104,7 @@ class Client:
                 time.sleep(wait)
                 continue
             self._read_capped(resp)
+            self._log(method, url, resp.status_code)
             if self.delay:
                 time.sleep(self.delay)
             return resp

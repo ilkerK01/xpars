@@ -163,6 +163,8 @@ def build_parser():
                    help="sadece tarayicida dogrulanan bulgulari raporla")
     p.add_argument("--confirm-timeout", dest="confirm_timeout", type=float, default=8.0)
     p.add_argument("--insecure", action="store_true")
+    p.add_argument("-v", "--verbose", action="store_true",
+                   help="gonderilen her istegi ekrana yaz (stderr)")
     p.add_argument("--html", dest="html_output")
     p.add_argument("-o", "--output", dest="output")
     p.add_argument("--version", action="version", version="xpars 0.1.0")
@@ -213,7 +215,8 @@ def main(argv=None):
     client = http.Client(timeout=args.timeout, delay=args.delay,
                          headers=args.headers, cookie=args.cookie,
                          user_agent=args.user_agent, proxy=args.proxy,
-                         verify=not args.insecure, rps=args.rps)
+                         verify=not args.insecure, rps=args.rps,
+                         verbose=args.verbose)
     mode = "subdomains" if args.subdomains else "strict"
     post_forms = []
     if (args.auto or args.passive) and not args.scope_allow:
@@ -241,7 +244,8 @@ def main(argv=None):
             collected += crawl.discover(client, permitted, sc, depth=depth,
                                         max_pages=args.max_pages, threads=args.threads,
                                         mode=mode, forms_out=post_forms,
-                                        on_progress=_crawl_progress)
+                                        on_progress=(None if args.verbose
+                                                     else _crawl_progress))
         collected = [u for u in collected if sc.permitted(u)]
         full = refine.refine(collected, params_only=False,
                              dedup=not args.no_dedup, collapse_numbers=args.aggressive_dedup)
