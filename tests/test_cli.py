@@ -29,6 +29,26 @@ def test_json_output(server, tmp_path):
     assert data["findings"]
 
 
+def test_detect_file_written(server, tmp_path):
+    dp = os.path.join(str(tmp_path), "detect.txt")
+    rc = cli.main(["-u", server + "/reflect?q=1", "--detect", dp])
+    assert rc == 0
+    assert os.path.exists(dp)
+    with open(dp, encoding="utf-8") as f:
+        body = f.read()
+    assert "param=q" in body
+    assert "payload=" in body
+
+
+def test_detect_no_duplicate_lines(server, tmp_path):
+    dp = os.path.join(str(tmp_path), "detect.txt")
+    cli.main(["-u", server + "/reflect?q=1", "--detect", dp])
+    with open(dp, encoding="utf-8") as f:
+        lines = [ln for ln in f.read().splitlines() if ln.strip()]
+    keys = [ln.split("payload=")[0] for ln in lines]
+    assert len(keys) == len(set(keys))
+
+
 def test_crlf_cli(server, capsys):
     rc = cli.main(["-u", server + "/crlf-hdr?x=1", "--crlf"])
     out = capsys.readouterr().out

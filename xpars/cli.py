@@ -4,6 +4,7 @@ import argparse
 import os
 import random
 import sys
+import time
 from urllib.parse import parse_qsl, urlsplit
 
 from . import (blind, confirm, crawl, discover as discover_mod, http,
@@ -168,6 +169,9 @@ def build_parser():
     p.add_argument("--html", dest="html_output")
     p.add_argument("-o", "--output", dest="output")
     p.add_argument("--log", dest="logpath")
+    p.add_argument("--detect", dest="detectpath", nargs="?", const="detect.txt",
+                   default=None,
+                   help="bulgu cikinca aninda detect dosyasina ekle (vars. detect.txt)")
     p.add_argument("--no-prefilter", dest="no_prefilter", action="store_true")
     p.add_argument("--version", action="version", version="xpars 0.1.0")
     p.set_defaults(waf=True)
@@ -370,6 +374,55 @@ def main(argv=None):
     else:
         dom_list = list(targets)
         get_scan_list = list(targets)
+    detect_seen = set()
+
+    def _flush_detect(findings):
+        if not args.detectpath:
+            return
+        new_lines = []
+        for f in findings:
+            key = (f.get("method"), f.get("url"), f.get("param"), f.get("context"))
+            if key in detect_seen:
+                continue
+            detect_seen.add(key)
+            ts = time.strftime("%H:%M:%S")
+            sev = str(f.get("severity", "")).upper()
+            vrf = "verified" if f.get("verified") else "reflected"
+            pay = (f.get("payload") or "").replace("\n", " ").replace("\r", " ")
+            new_lines.append(
+                "[%s] %s %s %s %s param=%s ctx=%s payload=%s" % (
+                    ts, sev, vrf, f.get("method", ""), f.get("url", ""),
+                    f.get("param", ""), f.get("context", ""), pay))
+        if not new_lines:
+            return
+        try:
+            with open(args.detectpath, "a", encoding="utf-8") as f:
+                f.write("\n".join(new_lines) + "\n")
+                f.flush()
+        except Exception:
+            pass
+
+    def _flush_report(res):
+        findings = scanner.dedup_findings(res.get("findings", []))
+        _flush_detect(findings)
+        if not args.output and not args.html_output:
+            return
+        snap = dict(res)
+        snap["findings"] = findings
+        if args.output:
+            try:
+                with open(args.output, "w", encoding="utf-8") as f:
+                    f.write(report.to_json(snap))
+            except Exception:
+                pass
+        if args.html_output:
+            try:
+                tgt = permitted[0] if permitted else "scan"
+                with open(args.html_output, "w", encoding="utf-8") as f:
+                    f.write(report.to_html(snap, tgt))
+            except Exception:
+                pass
+
     result = scanner.scan(client, get_scan_list, threads=args.threads,
                           payloads_list=payload_list, blind=args.blind,
                           post_forms=post_forms, crlf=args.crlf,
@@ -378,7 +431,7 @@ def main(argv=None):
                           path_scan=args.path_scan, multipart=args.multipart,
                           json_templates=json_templates, csti=args.csti,
                           graphql=graphql, dom_urls=dom_list,
-                          prefilter=not args.no_prefilter)
+                          prefilter=not args.no_prefilter, on_update=_flush_report)
     interrupted = result.get("interrupted")
     if args.header_scan and not targets and not interrupted:
         extra = []
@@ -453,6 +506,9 @@ def main(argv=None):
         if args.confirmed_only:
             result["findings"] = [f for f in result["findings"] if f.get("verified")]
             result["dom"] = [d for d in result["dom"] if d.get("verified")]
+    _flush_detect(scanner.dedup_findings(result.get("findings", [])))
+    if args.detectpath and detect_seen:
+        print("[detect] %d bulgu -> %s" % (len(detect_seen), args.detectpath))
     try:
         print(report.render(result))
     except Exception:

@@ -424,7 +424,7 @@ def dedup_findings(findings):
 def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=None,
          crlf=False, stop_on_confirm=False, evade=False, header_scan=False,
          json_forms=None, path_scan=False, multipart=False, json_templates=None,
-         csti=False, graphql=None, dom_urls=None, prefilter=True):
+         csti=False, graphql=None, dom_urls=None, prefilter=True, on_update=None):
     result = {"findings": [], "dom": [], "blind_sent": [], "interrupted": False}
     confirmed = set()
     lock = threading.Lock()
@@ -493,6 +493,11 @@ def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=Non
                 continue
             result["findings"].extend(finds)
             result["blind_sent"].extend(blind_sent)
+            if finds and on_update is not None:
+                try:
+                    on_update(result)
+                except Exception:
+                    pass
     except KeyboardInterrupt:
         result["interrupted"] = True
         try:

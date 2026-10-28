@@ -125,3 +125,15 @@ def test_prefilter_off_scans_normally(server):
     result = scanner.scan(_client(), [server + "/reflect?q=1"], threads=2,
                           prefilter=False)
     assert any(f["param"] == "q" for f in result["findings"])
+
+
+def test_on_update_fires_on_finding(server):
+    hits = {"n": 0, "last": 0}
+
+    def cb(res):
+        hits["n"] += 1
+        hits["last"] = len(res["findings"])
+
+    scanner.scan(_client(), [server + "/reflect?q=1"], threads=2, on_update=cb)
+    assert hits["n"] >= 1
+    assert hits["last"] >= 1

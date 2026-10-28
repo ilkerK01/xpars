@@ -94,6 +94,11 @@ Giriş noktaları (hiçbir yüzey kaçmasın):
 - Her bulgu hazır bir `curl` PoC ile raporlanır (GET/POST/JSON/header/cookie'ye göre).
 - `--insecure`: TLS doğrulamasını atla (kendinden imzalı sertifikalı laboratuvarlar).
 - Çıktı JSON (`-o`), metin (severity sıralı) ve HTML birlikte üretilebilir.
+- `--log dosya`: gönderilen her istek anında (flush'lı) log dosyasına yazılır; tarama
+  yarıda kesilse bile kanıt kalır. `-v/--verbose` aynısını stderr'e basar.
+- `--detect [dosya]`: bir bulgu çıktığı an tek satır olarak detect dosyasına eklenir
+  (varsayılan `detect.txt`, append + tekilleştirme). JSON/HTML rapor bitmeyi beklerken
+  bulgular canlı birikir; uzun taramada ve süreç ölse de bulgu listesi elde kalır.
 - Dayanıklılık: yanıt gövdesi 3 MB'a kadar okunur (OOM koruması), 429'da Retry-After
   ile üstel bekleme, hata yalıtımı, bulgu tekilleştirme, her bulguda severity/how alanı.
 
