@@ -237,7 +237,7 @@ def payload_lands(body, payload, context=None):
         rx = re.compile("<" + re.escape(tag_name) + r"[^<>\"'&]*javascript:", re.IGNORECASE)
         if rx.search(body):
             return True
-    if scheme and not tag_name:
+    if scheme and not tag_name and context in ("uri", None):
         uri = "|".join(re.escape(a) for a in URI_ATTRS)
         if re.search(r"(?:" + uri + r")\s*=\s*[\"']?\s*javascript:", body, re.IGNORECASE):
             return True

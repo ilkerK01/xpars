@@ -51,6 +51,16 @@ def test_payload_lands_scheme_only_needs_uri_attr():
     assert detect.payload_lands('<a href="javascript:alert(1)">x</a>', "javascript:alert(1)") is True
 
 
+def test_payload_lands_no_fp_scheme_payload_in_inert_context():
+    pay = "a.href=javascript:alert(1)"
+    body_json = '"currentQuery":{"lang":"a.href=javascript:alert(1)"}'
+    body_esc = "&quot;lang&quot;:&quot;a.href=javascript:alert(1)&quot;"
+    for ctx in ("rcdata", "json_reflection", "encoded", "comment", "style", "attribute"):
+        assert detect.payload_lands(body_json, pay, ctx) is False
+    assert detect.payload_lands(body_esc, pay, "rcdata") is False
+    assert detect.payload_lands('<a href="javascript:alert(1)">x</a>', "javascript:alert(1)", "uri") is True
+
+
 def test_uri_context_detected():
     mk = "xqdeadbeefqx"
     body = '<a href="' + mk + '&lt;&gt;&quot;&#x27;">x</a>'
