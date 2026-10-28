@@ -112,3 +112,16 @@ def test_dom_cookie_source(server):
 def test_dom_storage_source(server):
     result = scanner.scan(_client(), [server + "/domstorage"], threads=2)
     assert any("localstorage" in d["sources"] for d in result["dom"])
+
+
+def test_prefilter_skips_4xx(server):
+    result = scanner.scan(_client(), [server + "/wafblock?q=1"], threads=2,
+                          prefilter=True)
+    assert result["findings"] == []
+    assert result["interrupted"] is False
+
+
+def test_prefilter_off_scans_normally(server):
+    result = scanner.scan(_client(), [server + "/reflect?q=1"], threads=2,
+                          prefilter=False)
+    assert any(f["param"] == "q" for f in result["findings"])

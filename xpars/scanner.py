@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures as cf
+import sys
 import threading
 from urllib.parse import quote, urljoin, urlsplit
 
@@ -423,8 +424,8 @@ def dedup_findings(findings):
 def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=None,
          crlf=False, stop_on_confirm=False, evade=False, header_scan=False,
          json_forms=None, path_scan=False, multipart=False, json_templates=None,
-         csti=False, graphql=None, dom_urls=None):
-    result = {"findings": [], "dom": [], "blind_sent": []}
+         csti=False, graphql=None, dom_urls=None, prefilter=True):
+    result = {"findings": [], "dom": [], "blind_sent": [], "interrupted": False}
     confirmed = set()
     lock = threading.Lock()
 
@@ -433,6 +434,13 @@ def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=Non
             with lock:
                 if _host(u) in confirmed:
                     return [], []
+        if prefilter:
+            try:
+                base = client.get(u)
+            except Exception:
+                base = None
+            if base is None or getattr(base, "status_code", 0) >= 400:
+                return [], []
         finds, blind_sent = scan_url(client, u, payloads_list, blind, evade)
         if crlf:
             finds = finds + crlf_mod.scan_crlf(client, u)
@@ -458,8 +466,9 @@ def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=Non
         jobs.append(("JSONT", form))
     if graphql:
         jobs.append(("GQL", graphql))
-    with cf.ThreadPoolExecutor(max_workers=max(1, threads)) as pool:
-        futures = {}
+    pool = cf.ThreadPoolExecutor(max_workers=max(1, threads))
+    futures = {}
+    try:
         for kind, item in jobs:
             if kind == "GET":
                 futures[pool.submit(run_get, item)] = ("GET", item)
@@ -484,9 +493,22 @@ def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=Non
                 continue
             result["findings"].extend(finds)
             result["blind_sent"].extend(blind_sent)
-    try:
-        result["dom"] = _dom_pass(client, dom_urls if dom_urls is not None else list(urls))
-    except Exception:
-        result["dom"] = []
+    except KeyboardInterrupt:
+        result["interrupted"] = True
+        try:
+            sys.stderr.write("\n[durduruldu] o ana kadarki sonuclar yaziliyor\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
+    finally:
+        try:
+            pool.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            pool.shutdown(wait=False)
+    if not result["interrupted"]:
+        try:
+            result["dom"] = _dom_pass(client, dom_urls if dom_urls is not None else list(urls))
+        except Exception:
+            result["dom"] = []
     result["findings"] = dedup_findings(result["findings"])
     return result

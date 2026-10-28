@@ -167,6 +167,8 @@ def build_parser():
                    help="gonderilen her istegi ekrana yaz (stderr)")
     p.add_argument("--html", dest="html_output")
     p.add_argument("-o", "--output", dest="output")
+    p.add_argument("--log", dest="logpath")
+    p.add_argument("--no-prefilter", dest="no_prefilter", action="store_true")
     p.add_argument("--version", action="version", version="xpars 0.1.0")
     p.set_defaults(waf=True)
     return p
@@ -216,7 +218,7 @@ def main(argv=None):
                          headers=args.headers, cookie=args.cookie,
                          user_agent=args.user_agent, proxy=args.proxy,
                          verify=not args.insecure, rps=args.rps,
-                         verbose=args.verbose)
+                         verbose=args.verbose, logpath=args.logpath)
     mode = "subdomains" if args.subdomains else "strict"
     post_forms = []
     if (args.auto or args.passive) and not args.scope_allow:
@@ -375,13 +377,15 @@ def main(argv=None):
                           header_scan=args.header_scan, json_forms=json_forms,
                           path_scan=args.path_scan, multipart=args.multipart,
                           json_templates=json_templates, csti=args.csti,
-                          graphql=graphql, dom_urls=dom_list)
-    if args.header_scan and not targets:
+                          graphql=graphql, dom_urls=dom_list,
+                          prefilter=not args.no_prefilter)
+    interrupted = result.get("interrupted")
+    if args.header_scan and not targets and not interrupted:
         extra = []
         for u in permitted:
             extra += scanner.scan_headers(client, u, payload_list, args.evade)
         result["findings"] = scanner.dedup_findings(result["findings"] + extra)
-    if args.stored:
+    if args.stored and not interrupted:
         if args.auto or args.crawl is not None or args.passive:
             pages = list(all_endpoints)
         else:
@@ -396,7 +400,7 @@ def main(argv=None):
         else:
             print("[stored] kalici yansima yok (%d enjeksiyon, %d sayfa)"
                   % (len(ssent), len(pages)))
-    if args.blind_url or args.blind_listen:
+    if (args.blind_url or args.blind_listen) and not interrupted:
         header_urls = list(permitted) if args.header_scan else []
         bres = blind.run(client, callback=args.blind_url, get_targets=list(targets),
                          forms=post_forms, header_urls=header_urls,
@@ -407,7 +411,7 @@ def main(argv=None):
                  len(bres.get("hits", [])), len(bres.get("confirmed", []))))
     result["discovered"] = discovered
     result["wafs"] = []
-    if args.waf:
+    if args.waf and not interrupted:
         seen_hosts = set()
         for u in permitted:
             h = refine.host(u)
@@ -426,7 +430,7 @@ def main(argv=None):
         for f in result["findings"]:
             if refine.host(f.get("url", "")) in csp_hosts:
                 f["csp"] = "blocks-inline"
-    if args.confirm or args.verify:
+    if (args.confirm or args.verify) and not interrupted:
         if not confirm.available():
             print("[dogrulama] Playwright kurulu degil - kesinlik (FP'siz) modu "
                   "atlandi. Kurulum: py -3.11 -m pip install playwright && "

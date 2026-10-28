@@ -47,3 +47,13 @@ def test_keeps_real_endpoints():
 def test_params_only_filter():
     out = refine.refine(["http://h/a?q=1", "http://h/static"], params_only=True)
     assert out == ["http://h/a?q=1"]
+
+
+def test_junk_angular_state_dropped():
+    junk = "https://iris.who.int/server/api/x&q;}},&q;type&q;:&q;feature&q;}"
+    good = "https://www.who.int/search?q=1"
+    out = refine.refine([junk, good], params_only=False)
+    assert junk not in out
+    assert any("search" in u for u in out)
+    assert refine.is_junk(junk) is True
+    assert refine.is_junk(good) is False

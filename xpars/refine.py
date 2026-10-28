@@ -10,6 +10,15 @@ STATIC_EXT = {"css", "png", "jpg", "jpeg", "gif", "svg", "ico", "woff", "woff2",
 NUM_RE = re.compile(r"^\d+$")
 _EMPTY_SPLIT = SplitResult("", "", "", "", "")
 
+JUNK_TOKENS = ("&q;", "&a;", "&s;", "&l;", "&g;", "&p;", "&#",
+               "{", "}", "<", ">", "`", "\\", "\"")
+
+
+def is_junk(url):
+    if any(ch.isspace() for ch in url):
+        return True
+    return any(tok in url for tok in JUNK_TOKENS)
+
 
 def safe_split(url):
     try:
@@ -72,6 +81,8 @@ def refine(urls, params_only=False, drop_static=True, dedup=True, collapse_numbe
     seen_exact = set()
     seen_pattern = set()
     for raw in urls:
+        if is_junk(raw):
+            continue
         try:
             n = normalize(raw)
         except Exception:
