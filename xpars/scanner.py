@@ -424,7 +424,8 @@ def dedup_findings(findings):
 def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=None,
          crlf=False, stop_on_confirm=False, evade=False, header_scan=False,
          json_forms=None, path_scan=False, multipart=False, json_templates=None,
-         csti=False, graphql=None, dom_urls=None, prefilter=True, on_update=None):
+         csti=False, graphql=None, dom_urls=None, prefilter=True, on_update=None,
+         on_progress=None):
     result = {"findings": [], "dom": [], "blind_sent": [], "interrupted": False}
     confirmed = set()
     lock = threading.Lock()
@@ -486,13 +487,21 @@ def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=Non
                 futures[pool.submit(scan_form, client, item["action"],
                                     item["fields"], payloads_list, blind, evade,
                                     False, multipart, item.get("values"))] = ("POST", item)
+        total = len(futures)
+        done = 0
         for fut in cf.as_completed(futures):
+            done += 1
             try:
                 finds, blind_sent = fut.result()
             except Exception:
-                continue
+                finds, blind_sent = [], []
             result["findings"].extend(finds)
             result["blind_sent"].extend(blind_sent)
+            if on_progress is not None:
+                try:
+                    on_progress(done, total, len(result["findings"]))
+                except Exception:
+                    pass
             if finds and on_update is not None:
                 try:
                     on_update(result)

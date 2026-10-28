@@ -91,6 +91,21 @@ def _crawl_progress(done, total, host):
         pass
 
 
+def _scan_progress(done, total, found):
+    try:
+        if not sys.stderr.isatty():
+            if total <= 1 or done == total or done % 25 == 0:
+                sys.stderr.write("[tarama] %d/%d hedef, %d bulgu\n" % (done, total, found))
+                sys.stderr.flush()
+            return
+        sys.stderr.write("\r\033[2K[tarama] %d/%d hedef, %d bulgu" % (done, total, found))
+        if done == total:
+            sys.stderr.write("\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
 def _dedup_forms(forms):
     out = []
     seen = set()
@@ -431,7 +446,8 @@ def main(argv=None):
                           path_scan=args.path_scan, multipart=args.multipart,
                           json_templates=json_templates, csti=args.csti,
                           graphql=graphql, dom_urls=dom_list,
-                          prefilter=not args.no_prefilter, on_update=_flush_report)
+                          prefilter=not args.no_prefilter, on_update=_flush_report,
+                          on_progress=(None if args.verbose else _scan_progress))
     interrupted = result.get("interrupted")
     if args.header_scan and not targets and not interrupted:
         extra = []

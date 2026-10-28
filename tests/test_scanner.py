@@ -127,6 +127,19 @@ def test_prefilter_off_scans_normally(server):
     assert any(f["param"] == "q" for f in result["findings"])
 
 
+def test_on_progress_fires_per_job(server):
+    seen = []
+
+    def cb(done, total, found):
+        seen.append((done, total, found))
+
+    scanner.scan(_client(), [server + "/reflect?q=1", server + "/safe?x=1"],
+                 threads=2, on_progress=cb)
+    assert seen
+    assert seen[-1][0] == seen[-1][1]
+    assert seen[-1][1] == 2
+
+
 def test_on_update_fires_on_finding(server):
     hits = {"n": 0, "last": 0}
 
