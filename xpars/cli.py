@@ -237,7 +237,12 @@ def _confirm_decision(args, available, is_tty):
     return bool(available and is_tty)
 
 
+_INTERRUPTED = False
+
+
 def main(argv=None):
+    global _INTERRUPTED
+    _INTERRUPTED = False
     args = build_parser().parse_args(argv)
     if args.clear:
         print("\033[2J\033[H", end="")
@@ -596,6 +601,8 @@ def main(argv=None):
                           on_progress=(None if args.verbose else _scan_progress),
                           do_harvest=False)
     interrupted = result.get("interrupted")
+    if interrupted:
+        _INTERRUPTED = True
     if args.header_scan and not targets and not interrupted:
         extra = []
         for u in permitted:

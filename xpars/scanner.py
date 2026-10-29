@@ -405,6 +405,7 @@ def _host(url):
 
 _PATH_FUTILE = {}
 _PATH_FUTILE_LOCK = threading.Lock()
+_STOP = threading.Event()
 
 
 def _origin(url):
@@ -590,10 +591,13 @@ def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=Non
          csti=False, graphql=None, dom_urls=None, prefilter=True, on_update=None,
          on_progress=None, do_harvest=False):
     result = {"findings": [], "dom": [], "blind_sent": [], "interrupted": False}
+    _STOP.clear()
     confirmed = set()
     lock = threading.Lock()
 
     def run_get(u):
+        if _STOP.is_set():
+            return [], []
         if stop_on_confirm:
             with lock:
                 if _host(u) in confirmed:
@@ -606,13 +610,13 @@ def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=Non
             if base is None or getattr(base, "status_code", 0) >= 400:
                 return [], []
         finds, blind_sent = scan_url(client, u, payloads_list, blind, evade)
-        if crlf:
+        if crlf and not _STOP.is_set():
             finds = finds + crlf_mod.scan_crlf(client, u)
-        if path_scan and not _path_scan_futile(client, u):
+        if path_scan and not _STOP.is_set() and not _path_scan_futile(client, u):
             finds = finds + scan_path(client, u, payloads_list, evade)
-        if header_scan:
+        if header_scan and not _STOP.is_set():
             finds = finds + scan_headers(client, u, payloads_list, evade)
-        if csti:
+        if csti and not _STOP.is_set():
             finds = finds + scan_csti(client, u)
         if stop_on_confirm and finds:
             with lock:
@@ -672,6 +676,7 @@ def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=Non
                     pass
     except KeyboardInterrupt:
         result["interrupted"] = True
+        _STOP.set()
         try:
             sys.stderr.write("\n[durduruldu] o ana kadarki sonuclar yaziliyor\n")
             sys.stderr.flush()
