@@ -9,8 +9,13 @@ URLSCAN = "https://urlscan.io/api/v1/search/"
 OTX = "https://otx.alienvault.com/api/v1/indicators/domain/%s/url_list"
 CRTSH = "https://crt.sh/"
 HACKERTARGET = "https://api.hackertarget.com/hostsearch/"
+CERTSPOTTER = "https://api.certspotter.com/v1/issuances"
+THREATMINER = "https://api.threatminer.org/v2/domain.php"
+SECURITYTRAILS = "https://api.securitytrails.com/v1/domain/%s/subdomains"
+VIRUSTOTAL = "https://www.virustotal.com/api/v3/domains/%s/subdomains"
+KEY_SOURCES = ("securitytrails", "virustotal")
 
-KEYLESS = ("wayback", "urlscan", "otx")
+KEYLESS = ("wayback", "urlscan", "otx", "certspotter", "threatminer")
 
 
 def parse_cdx(text):
@@ -53,6 +58,43 @@ def parse_hackertarget(text, domain):
     return out
 
 
+def parse_certspotter(data, domain):
+    subs = set()
+    for row in data or []:
+        for h in row.get("dns_names", []) or []:
+            hh = (h or "").strip().lstrip("*.").lower()
+            if hh and hh.endswith(domain) and "@" not in hh:
+                subs.add("https://" + hh + "/")
+    return sorted(subs)
+
+
+def parse_threatminer(data, domain):
+    out = []
+    for h in (data or {}).get("results", []) or []:
+        hh = str(h or "").strip().lstrip("*.").lower()
+        if hh and hh.endswith(domain) and "@" not in hh:
+            out.append("https://" + hh + "/")
+    return out
+
+
+def parse_securitytrails(data, domain):
+    out = []
+    for sub in (data or {}).get("subdomains", []) or []:
+        hh = (str(sub).strip().lower() + "." + domain).lstrip(".")
+        if hh and "@" not in hh:
+            out.append("https://" + hh + "/")
+    return out
+
+
+def parse_virustotal(data, domain):
+    out = []
+    for item in (data or {}).get("data", []) or []:
+        hh = str(item.get("id", "")).strip().lstrip("*.").lower()
+        if hh and hh.endswith(domain) and "@" not in hh:
+            out.append("https://" + hh + "/")
+    return out
+
+
 def belongs(url, domain, subdomains=False):
     h = refine.host(url)
     if not h:
@@ -62,10 +104,12 @@ def belongs(url, domain, subdomains=False):
     return bool(subdomains) and h.endswith("." + domain)
 
 
-def _get(url, params=None, timeout=25):
+def _get(url, params=None, timeout=25, headers=None):
+    h = {"User-Agent": "xpars"}
+    if headers:
+        h.update(headers)
     try:
-        resp = requests.get(url, params=params, timeout=timeout,
-                            headers={"User-Agent": "xpars"})
+        resp = requests.get(url, params=params, timeout=timeout, headers=h)
     except Exception:
         return None
     if resp.status_code != 200:
@@ -109,7 +153,47 @@ def hackertarget(domain, timeout=25):
     return parse_hackertarget(resp.text if resp is not None else "", domain)
 
 
-def gather(domain, subdomains=False, limit=5000, timeout=25, sources=None):
+def certspotter(domain, timeout=30):
+    return parse_certspotter(_json(_get(CERTSPOTTER, {"domain": domain,
+        "include_subdomains": "true", "expand": "dns_names"}, timeout)), domain)
+
+
+def threatminer(domain, timeout=25):
+    return parse_threatminer(_json(_get(THREATMINER, {"q": domain, "rt": "5"},
+        timeout)), domain)
+
+
+def securitytrails(domain, key, timeout=25):
+    if not key:
+        return []
+    return parse_securitytrails(_json(_get(SECURITYTRAILS % domain,
+        headers={"APIKEY": key}, timeout=timeout)), domain)
+
+
+def virustotal(domain, key, timeout=25):
+    if not key:
+        return []
+    return parse_virustotal(_json(_get(VIRUSTOTAL % domain,
+        headers={"x-apikey": key}, timeout=timeout)), domain)
+
+
+def load_keys(path):
+    keys = {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                if k.strip() and v.strip():
+                    keys[k.strip().lower()] = v.strip()
+    except Exception:
+        return {}
+    return keys
+
+
+def gather(domain, subdomains=False, limit=5000, timeout=25, sources=None, keys=None):
     use = tuple(sources) if sources else ("wayback",)
     urls = set()
     if "wayback" in use:
@@ -124,4 +208,13 @@ def gather(domain, subdomains=False, limit=5000, timeout=25, sources=None):
         urls |= set(crtsh(domain, timeout=timeout))
     if "hackertarget" in use:
         urls |= set(hackertarget(domain, timeout=timeout))
+    if "certspotter" in use:
+        urls |= set(certspotter(domain, timeout=timeout))
+    if "threatminer" in use:
+        urls |= set(threatminer(domain, timeout=timeout))
+    kk = keys or {}
+    if "securitytrails" in use:
+        urls |= set(securitytrails(domain, kk.get("securitytrails"), timeout=timeout))
+    if "virustotal" in use:
+        urls |= set(virustotal(domain, kk.get("virustotal"), timeout=timeout))
     return sorted(u for u in urls if belongs(u, domain, subdomains))

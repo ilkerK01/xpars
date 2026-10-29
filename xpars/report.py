@@ -3,6 +3,7 @@ from __future__ import annotations
 import html as htmllib
 import json
 import shlex
+import sys
 from urllib.parse import quote
 
 from . import params
@@ -79,9 +80,39 @@ def poc(f):
     return "curl -gsk " + _q(url)
 
 
+def poc_url(f):
+    method = f.get("method", "GET")
+    payload = f.get("payload") or ""
+    url = f.get("url", "")
+    name = f.get("param", "")
+    if method in ("GET", "CSTI-GET"):
+        try:
+            return params.set_param(url, name, payload)
+        except Exception:
+            return None
+    if method == "PATH":
+        idx = f.get("path_index")
+        try:
+            return params.set_path_segment(url, idx, quote(payload, safe=""))
+        except Exception:
+            return None
+    return None
+
+
 def _sorted_findings(result):
     return sorted(result.get("findings", []),
                   key=lambda f: SEV_RANK.get(f.get("severity", "high"), 1))
+
+
+def _tty():
+    try:
+        return bool(sys.stdout.isatty())
+    except Exception:
+        return False
+
+
+def _tick():
+    return "\033[92m✓\033[0m" if _tty() else "✓"
 
 
 def render(result):
@@ -137,7 +168,7 @@ def render(result):
 
     def emit_finding(item):
         lines.append("")
-        tag = "[XSS-DOGRULANDI]" if item.get("verified") else "[XSS]"
+        tag = (_tick() + " [XSS-DOGRULANDI]") if item.get("verified") else "[XSS]"
         lines.append("%s %s %s" % (tag, item.get("method", "GET"), item["url"]))
         lines.append("  severity: %s  (%s)" % (item.get("severity", "high"),
                                                item.get("how", "")))
@@ -158,6 +189,9 @@ def render(result):
                 lines.append("    %s" % p)
         lines.append("  kanit   : %s" % (item.get("evidence", "")[:120]))
         lines.append("  poc     : %s" % poc(item))
+        pu = poc_url(item)
+        if pu:
+            lines.append("  ac      : %s" % pu)
 
     if confirmed:
         lines.append("")
@@ -181,7 +215,7 @@ def render(result):
         lines.append("== DOM DOGRULANDI: %d (tarayicida yurutuldu) ==" % len(dom_conf))
         for d in dom_conf:
             lines.append("")
-            lines.append("[DOM-DOGRULANDI] %s" % d["url"])
+            lines.append("%s [DOM-DOGRULANDI] %s" % (_tick(), d["url"]))
             lines.append("  kaynak  : %s" % ", ".join(d.get("sources", [])))
             lines.append("  sink    : %s" % ", ".join(d.get("sinks", [])))
             if d.get("verified_via"):
@@ -219,6 +253,19 @@ def render(result):
             lines.append("  [TETIKLENDI] %s %s param=%s (mk=%s)"
                          % (c.get("method", ""), c.get("url", ""),
                             c.get("param", ""), c.get("marker", "")))
+    hv = result.get("harvest") or {}
+    secrets = hv.get("secrets") or []
+    cands = hv.get("candidates") or {}
+    if secrets or any(cands.values()):
+        lines.append("")
+        lines.append("== HASAT: %d sir, aday uc LFI:%d RCE:%d SQLi:%d XSS:%d ==" % (
+            len(secrets), len(cands.get("lfi", [])), len(cands.get("rce", [])),
+            len(cands.get("sqli", [])), len(cands.get("xss", []))))
+        for s in secrets[:30]:
+            lines.append("  [SIR] %s: %s" % (s.get("type"), s.get("value")))
+        for k in ("lfi", "rce", "sqli", "xss"):
+            for u in (cands.get(k) or [])[:15]:
+                lines.append("  [%s] %s" % (k.upper(), u))
     return "\n".join(lines)
 
 
@@ -250,6 +297,37 @@ font-weight:700;color:#0b0d11}
 .ver{color:var(--ok);font-weight:700}
 .muted{color:var(--mut)}
 .sec{margin:24px 0 8px;font-size:15px}
+.toolbar{display:flex;gap:10px;margin:0 0 16px}
+.btn{background:var(--card);border:1px solid var(--line);color:var(--fg);
+border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer}
+.btn:hover{border-color:var(--low)}
+.charts{display:flex;gap:16px;flex-wrap:wrap;margin:0 0 20px}
+.chart-box{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:12px 16px;flex:1;min-width:260px;max-width:460px}
+.chart-box h3{margin:0 0 8px;font-size:13px;color:var(--mut);font-weight:600}
+.shot{display:block;max-width:100%;border:1px solid var(--line);border-radius:8px;margin:8px 0}
+@media print{body{background:#fff;color:#000}.toolbar{display:none}
+.card,.chart-box,table{break-inside:avoid}}
+"""
+
+
+_CHART_JS = """
+(function(){
+  var el=document.getElementById('xpars-data');
+  if(!el||typeof Chart==='undefined')return;
+  var d;try{d=JSON.parse(el.textContent||'{}');}catch(e){return;}
+  var sev=document.getElementById('sevChart');
+  var ctx=document.getElementById('ctxChart');
+  try{ if(sev) new Chart(sev,{type:'doughnut',
+    data:{labels:['kritik','yuksek','orta','dusuk'],
+      datasets:[{data:d.sev||[],backgroundColor:['#ff4d6d','#ff9f43','#ffd166','#4dabf7']}]},
+    options:{plugins:{legend:{labels:{color:'#9aa3b2'}}}}}); }catch(e){}
+  try{ if(ctx) new Chart(ctx,{type:'bar',
+    data:{labels:d.ctxLabels||[],
+      datasets:[{data:d.ctxValues||[],backgroundColor:'#4dabf7'}]},
+    options:{plugins:{legend:{display:false}},
+      scales:{x:{ticks:{color:'#9aa3b2'}},y:{beginAtZero:true,ticks:{color:'#9aa3b2'}}}}}); }catch(e){}
+})();
 """
 
 
@@ -262,10 +340,22 @@ def to_html(result, target="scan"):
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     for f in findings:
         counts[f.get("severity", "high")] = counts.get(f.get("severity", "high"), 0) + 1
+    ctx_counts = {}
+    for f in findings:
+        for c in (f.get("contexts") or [f.get("context")]):
+            if c:
+                ctx_counts[c] = ctx_counts.get(c, 0) + 1
+    chart_data = {
+        "sev": [counts.get("critical", 0), counts.get("high", 0),
+                counts.get("medium", 0), counts.get("low", 0)],
+        "ctxLabels": list(ctx_counts.keys()),
+        "ctxValues": list(ctx_counts.values()),
+    }
     rows = []
     for f in findings:
         sev = f.get("severity", "high")
-        ver = '<span class="ver">evet</span>' if f.get("verified") else '<span class="muted">hayir</span>'
+        ver = ('<span class="ver">&#10003;</span>' if f.get("verified")
+               else '<span class="muted">hayir</span>')
         rows.append(
             "<tr><td><span class='badge b-%s'>%s</span></td><td>%s</td>"
             "<td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
@@ -303,11 +393,28 @@ def to_html(result, target="scan"):
     parts.append("<div class='card'><b>%d</b><span>toplam bulgu</span></div>"
                  % len(findings))
     parts.append("</div>")
+    parts.append("<div class='toolbar'>"
+                 "<button class='btn' onclick='window.print()'>PDF olarak kaydet</button>"
+                 "</div>")
+    if findings:
+        parts.append("<div class='charts'>"
+                     "<div class='chart-box'><h3>Severite dagilimi</h3>"
+                     "<canvas id='sevChart' height='220'></canvas></div>"
+                     "<div class='chart-box'><h3>Baglam dagilimi</h3>"
+                     "<canvas id='ctxChart' height='220'></canvas></div></div>")
     if findings:
         parts.append("<div class='sec'>Bulgular</div>")
         parts.append("<table><tr><th>severity</th><th>method</th><th>url</th>"
                      "<th>param</th><th>baglam</th><th>how</th><th>dogrulandi</th>"
                      "<th>payload</th><th>poc</th></tr>" + "".join(rows) + "</table>")
+        shots = [f for f in findings if f.get("screenshot")]
+        if shots:
+            parts.append("<div class='sec'>Ekran goruntuleri (dogrulanan)</div>")
+            for f in shots:
+                parts.append("<div class='muted'>%s %s param=%s</div>" % (
+                    _esc(f.get("method", "GET")), _esc(f.get("url")), _esc(f.get("param"))))
+                parts.append("<img class='shot' src='%s' alt='screenshot'>"
+                             % _esc(f.get("screenshot")))
     if waf_rows:
         parts.append("<div class='sec'>WAF / CDN</div>")
         parts.append("<table><tr><th>host</th><th>tespit</th><th>bloklu</th></tr>"
@@ -320,5 +427,28 @@ def to_html(result, target="scan"):
         parts.append("<div class='sec'>Kesfedilen gizli parametreler</div>")
         parts.append("<table><tr><th>url</th><th>method</th><th>parametre</th></tr>"
                      + "".join(disc_rows) + "</table>")
+    hv = result.get("harvest") or {}
+    sec_rows = []
+    for s in (hv.get("secrets") or [])[:100]:
+        sec_rows.append("<tr><td>%s</td><td><code>%s</code></td></tr>"
+                        % (_esc(s.get("type")), _esc(s.get("value"))))
+    cand_rows = []
+    for k in ("lfi", "rce", "sqli", "xss"):
+        for u in ((hv.get("candidates") or {}).get(k) or [])[:50]:
+            cand_rows.append("<tr><td>%s</td><td><code>%s</code></td></tr>"
+                             % (k.upper(), _esc(u)))
+    if sec_rows:
+        parts.append("<div class='sec'>Sizan sirlar / anahtarlar</div>")
+        parts.append("<table><tr><th>tur</th><th>deger</th></tr>"
+                     + "".join(sec_rows) + "</table>")
+    if cand_rows:
+        parts.append("<div class='sec'>Aday uclar (LFI/RCE/SQLi/XSS)</div>")
+        parts.append("<table><tr><th>sinif</th><th>url</th></tr>"
+                     + "".join(cand_rows) + "</table>")
+    parts.append("<script type='application/json' id='xpars-data'>%s</script>"
+                 % json.dumps(chart_data))
+    parts.append("<script src='https://cdn.jsdelivr.net/npm/chart.js@4.4.1/"
+                 "dist/chart.umd.min.js'></script>")
+    parts.append("<script>%s</script>" % _CHART_JS)
     parts.append("</body></html>")
     return "".join(parts)

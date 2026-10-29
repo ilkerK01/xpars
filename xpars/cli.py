@@ -7,9 +7,9 @@ import sys
 import time
 from urllib.parse import parse_qsl, urlsplit
 
-from . import (blind, confirm, crawl, discover as discover_mod, http,
-               params as paramlib, passive, payloads, refine, report, scanner,
-               scope, stored, verify, waf)
+from . import (blind, burp, confirm, crawl, dirscan, discover as discover_mod,
+               http, params as paramlib, passive, payloads, refine, report,
+               scanner, scope, session as session_mod, stored, verify, waf)
 
 _GREEN = "\033[92m"
 _RED = "\033[91m"
@@ -144,7 +144,10 @@ def build_parser():
     p.add_argument("--fail-on-finding", dest="fail_on_finding", action="store_true")
     p.add_argument("--stored", action="store_true")
     p.add_argument("--path-scan", dest="path_scan", action="store_true")
+    p.add_argument("--harvest", action="store_true")
     p.add_argument("--rps", type=float, default=0.0)
+    p.add_argument("--stealth", choices=["low", "medium", "high"], default=None)
+    p.add_argument("--spray", action="store_true")
     p.add_argument("--multipart", action="store_true")
     p.add_argument("--json-data", dest="json_data", action="append")
     p.add_argument("--blind-url", dest="blind_url")
@@ -166,6 +169,8 @@ def build_parser():
     p.add_argument("--auto", action="store_true")
     p.add_argument("--passive", action="store_true")
     p.add_argument("--passive-sources", dest="passive_sources")
+    p.add_argument("--passive-keys", dest="passive_keys")
+    p.add_argument("--dirscan", action="store_true")
     p.add_argument("--no-waf", dest="waf", action="store_false")
     p.add_argument("--subdomains", action="store_true")
     p.add_argument("--max-pages", dest="max_pages", type=int, default=60)
@@ -178,6 +183,11 @@ def build_parser():
     p.add_argument("--confirmed-only", dest="confirmed_only", action="store_true",
                    help="sadece tarayicida dogrulanan bulgulari raporla")
     p.add_argument("--confirm-timeout", dest="confirm_timeout", type=float, default=8.0)
+    p.add_argument("--no-confirm", dest="no_confirm", action="store_true")
+    p.add_argument("--get-burp", dest="get_burp")
+    p.add_argument("--post-burp", dest="post_burp")
+    p.add_argument("--capture-session", dest="capture_session")
+    p.add_argument("--session", dest="session")
     p.add_argument("--insecure", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true",
                    help="gonderilen her istegi ekrana yaz (stderr)")
@@ -212,11 +222,40 @@ def _load_urls(args):
     return [_normalize(u) for u in out]
 
 
+def _isatty():
+    try:
+        return bool(sys.stderr.isatty())
+    except Exception:
+        return False
+
+
+def _confirm_decision(args, available, is_tty):
+    if getattr(args, "no_confirm", False):
+        return False
+    if args.confirm or args.verify:
+        return True
+    return bool(available and is_tty)
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.clear:
         print("\033[2J\033[H", end="")
     banner()
+    if args.capture_session:
+        out = args.session or "xpars-session.json"
+        if not session_mod.available():
+            print("[oturum] Playwright kurulu degil. Kurulum: py -3.11 -m pip "
+                  "install playwright && py -3.11 -m playwright install chromium")
+            return 2
+        res = session_mod.capture(args.capture_session, out)
+        if res.get("ok"):
+            print("[oturum] kaydedildi -> %s (%d cookie, %d origin, header: %s)" % (
+                out, res["cookies"], res["origins"],
+                ", ".join(res["headers"]) or "yok"))
+            return 0
+        print("[oturum] yakalanamadi: %s" % res.get("reason"))
+        return 1
     urls = _load_urls(args)
     if not urls:
         print("hedef yok: -u <url> ya da --urls <dosya> ver")
@@ -233,11 +272,29 @@ def main(argv=None):
         return 2
     if args.shuffle:
         random.shuffle(permitted)
-    client = http.Client(timeout=args.timeout, delay=args.delay,
+    session_state = None
+    s_cookies = []
+    if args.session:
+        try:
+            s_cookies, s_headers, session_state = session_mod.load(args.session)
+        except Exception as exc:
+            print("[oturum] yuklenemedi: %s" % type(exc).__name__)
+            s_cookies, s_headers, session_state = [], {}, None
+        if s_headers:
+            args.headers = (args.headers or []) + ["%s: %s" % (k, v)
+                                                   for k, v in s_headers.items()]
+        print("[oturum] %s -> %d cookie, %d header" % (
+            args.session, len(s_cookies), len(s_headers)))
+    stealth = http.stealth_profile(args.stealth)
+    client = http.Client(timeout=args.timeout,
+                         delay=args.delay or stealth["delay"],
                          headers=args.headers, cookie=args.cookie,
                          user_agent=args.user_agent, proxy=args.proxy,
-                         verify=not args.insecure, rps=args.rps,
-                         verbose=args.verbose, logpath=args.logpath)
+                         verify=not args.insecure,
+                         rps=args.rps or stealth["rps"],
+                         jitter=stealth["jitter"],
+                         verbose=args.verbose, logpath=args.logpath,
+                         cookies=s_cookies)
     mode = "subdomains" if args.subdomains else "strict"
     post_forms = []
     if (args.auto or args.passive) and not args.scope_allow:
@@ -255,9 +312,15 @@ def main(argv=None):
             else:
                 psources = ["wayback", "urlscan", "otx"]
                 if args.subdomains:
-                    psources += ["crtsh", "hackertarget"]
+                    psources += ["crtsh", "hackertarget", "certspotter", "threatminer"]
+            pkeys = passive.load_keys(args.passive_keys) if args.passive_keys else {}
+            if pkeys and args.subdomains:
+                for ks in passive.KEY_SOURCES:
+                    if ks in pkeys and ks not in psources:
+                        psources.append(ks)
             for d in sorted({refine.host(u) for u in permitted}):
-                found = passive.gather(d, subdomains=args.subdomains, sources=psources)
+                found = passive.gather(d, subdomains=args.subdomains, sources=psources,
+                                       keys=pkeys)
                 collected += found
                 print("[pasif] %s (%s) -> %d url" % (d, ",".join(psources), len(found)))
         if args.auto or args.crawl is not None:
@@ -287,6 +350,21 @@ def main(argv=None):
             print("[endpoints] %s" % args.endpoints)
     else:
         targets = permitted
+    if args.dirscan:
+        hits = []
+        seen_d = set()
+        for u in permitted:
+            r = dirscan.root(u)
+            if not r or not sc.permitted(r):
+                continue
+            for h in dirscan.scan(client, r):
+                if h["url"] not in seen_d and sc.permitted(h["url"]):
+                    seen_d.add(h["url"])
+                    hits.append(h["url"])
+        if hits:
+            targets = list(targets) + hits
+            all_endpoints = list(all_endpoints) + hits
+            print("[dirscan] %d yol bulundu" % len(hits))
     json_forms = []
     if args.data:
         fields = [k for k, _ in parse_qsl(args.data, keep_blank_values=True)]
@@ -371,6 +449,43 @@ def main(argv=None):
         if not discovered:
             print("[kesif-param] gizli parametre bulunamadi")
         post_forms = _dedup_forms(post_forms)
+    if args.get_burp:
+        bg = burp.load_folder(args.get_burp, only_method="GET")
+        added = [t["url"] for t in bg if t["kind"] == "get" and sc.permitted(t["url"])]
+        if added:
+            targets = list(targets) + added
+            print("[get-burp] %d GET istegi yuklendi" % len(added))
+    if args.post_burp:
+        bp = burp.load_folder(args.post_burp, only_method="POST")
+        n = 0
+        for t in bp:
+            if not sc.permitted(t["action"]):
+                continue
+            if t["kind"] == "json":
+                json_templates.append({"action": t["action"], "template": t["template"]})
+                n += 1
+            elif t["kind"] == "post":
+                post_forms.append({"action": t["action"], "fields": t["fields"],
+                                   "values": t.get("values")})
+                n += 1
+        post_forms = _dedup_forms(post_forms)
+        if n:
+            print("[post-burp] %d POST istegi yuklendi" % n)
+    harvest_result = None
+    if args.harvest:
+        hsrc = (list(all_endpoints)
+                if (args.auto or args.crawl is not None or args.passive)
+                else list(permitted))
+        try:
+            harvest_result, hinject = scanner.harvest_collect(client, hsrc, sc.permitted)
+        except Exception:
+            harvest_result, hinject = None, []
+        tset = set(targets)
+        newh = [u for u in hinject if u not in tset]
+        if newh:
+            targets = list(targets) + newh
+        print("[hasat] %d parametreli uc toplandi, %d yeni hedef taramaya eklendi"
+              % (len(hinject), len(newh)))
     if not targets and not post_forms and not json_forms and not json_templates \
             and not graphql and not args.header_scan:
         print("test edilecek hedef yok (domain icin --auto, POST icin --data ekle)")
@@ -417,6 +532,35 @@ def main(argv=None):
         except Exception:
             pass
 
+    def _detect_line(f, mark):
+        ts = time.strftime("%H:%M:%S")
+        sev = str(f.get("severity", "")).upper()
+        pay = (f.get("payload") or "").replace("\n", " ").replace("\r", " ")
+        return "[%s] %s%s %s %s param=%s ctx=%s payload=%s" % (
+            ts, mark, sev, f.get("method", ""), f.get("url", ""),
+            f.get("param", ""), f.get("context", ""), pay)
+
+    def _detect_split(findings):
+        if not args.detectpath:
+            return None
+        root, ext = os.path.splitext(args.detectpath)
+        conf_path = root + "-confirmed" + (ext or ".txt")
+        unv = [f for f in findings if not f.get("verified")]
+        ver = [f for f in findings if f.get("verified")]
+        try:
+            with open(args.detectpath, "w", encoding="utf-8") as fh:
+                if unv:
+                    fh.write("\n".join(_detect_line(f, "") for f in unv) + "\n")
+        except Exception:
+            pass
+        if ver:
+            try:
+                with open(conf_path, "w", encoding="utf-8") as fh:
+                    fh.write("\n".join(_detect_line(f, "✓ ") for f in ver) + "\n")
+            except Exception:
+                pass
+        return conf_path, len(unv), len(ver)
+
     def _flush_report(res):
         findings = scanner.dedup_findings(res.get("findings", []))
         _flush_detect(findings)
@@ -438,6 +582,8 @@ def main(argv=None):
             except Exception:
                 pass
 
+    if args.spray:
+        get_scan_list = scanner.spray_order(get_scan_list)
     result = scanner.scan(client, get_scan_list, threads=args.threads,
                           payloads_list=payload_list, blind=args.blind,
                           post_forms=post_forms, crlf=args.crlf,
@@ -447,7 +593,8 @@ def main(argv=None):
                           json_templates=json_templates, csti=args.csti,
                           graphql=graphql, dom_urls=dom_list,
                           prefilter=not args.no_prefilter, on_update=_flush_report,
-                          on_progress=(None if args.verbose else _scan_progress))
+                          on_progress=(None if args.verbose else _scan_progress),
+                          do_harvest=False)
     interrupted = result.get("interrupted")
     if args.header_scan and not targets and not interrupted:
         extra = []
@@ -479,6 +626,15 @@ def main(argv=None):
               % (bres.get("callback"), len(bres.get("log", [])),
                  len(bres.get("hits", [])), len(bres.get("confirmed", []))))
     result["discovered"] = discovered
+    if args.harvest and harvest_result is not None:
+        result["harvest"] = harvest_result
+    if args.harvest:
+        hv = result.get("harvest") or {}
+        cnd = hv.get("candidates", {})
+        print("[hasat] %d sir, aday uc LFI:%d RCE:%d SQLi:%d XSS:%d, %d endpoint"
+              % (len(hv.get("secrets", [])), len(cnd.get("lfi", [])),
+                 len(cnd.get("rce", [])), len(cnd.get("sqli", [])),
+                 len(cnd.get("xss", [])), len(hv.get("endpoints", []))))
     result["wafs"] = []
     if args.waf and not interrupted:
         seen_hosts = set()
@@ -499,14 +655,16 @@ def main(argv=None):
         for f in result["findings"]:
             if refine.host(f.get("url", "")) in csp_hosts:
                 f["csp"] = "blocks-inline"
-    if (args.confirm or args.verify) and not interrupted:
+    do_confirm = _confirm_decision(args, confirm.available(), _isatty())
+    if do_confirm and not interrupted:
         if not confirm.available():
             print("[dogrulama] Playwright kurulu degil - kesinlik (FP'siz) modu "
                   "atlandi. Kurulum: py -3.11 -m pip install playwright && "
                   "py -3.11 -m playwright install chromium")
         try:
             csum = confirm.run(result["findings"], result["dom"],
-                               timeout=args.confirm_timeout)
+                               timeout=args.confirm_timeout, capture=True,
+                               storage_state=session_state)
         except Exception as exc:
             sys.stderr.write("[uyari] dogrulama hatasi, dogrulanmamis raporlaniyor: %s\n"
                              % type(exc).__name__)
@@ -522,9 +680,12 @@ def main(argv=None):
         if args.confirmed_only:
             result["findings"] = [f for f in result["findings"] if f.get("verified")]
             result["dom"] = [d for d in result["dom"] if d.get("verified")]
-    _flush_detect(scanner.dedup_findings(result.get("findings", [])))
-    if args.detectpath and detect_seen:
-        print("[detect] %d bulgu -> %s" % (len(detect_seen), args.detectpath))
+    split = _detect_split(scanner.dedup_findings(result.get("findings", [])))
+    if split:
+        conf_path, nunv, nver = split
+        print("[detect] %d dogrulanmamis -> %s" % (nunv, args.detectpath))
+        if nver:
+            print("[confirmed] %d dogrulanmis (tik) -> %s" % (nver, conf_path))
     try:
         print(report.render(result))
     except Exception:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 TAG_RE = re.compile(r"<\s*([A-Za-z][A-Za-z0-9]*)")
+_CALL_RE = re.compile(r"\b(alert|confirm|prompt)\s*\(")
 
 
 def _case_mix(s):
@@ -50,6 +51,33 @@ def _entity_scheme(s):
     return re.sub(r"javascript:", "javascript&colon;", s, flags=re.IGNORECASE)
 
 
+def _scope_calls(s):
+    if not _CALL_RE.search(s):
+        return []
+    out = []
+    for scope in ("window.", "self.", "top.", "parent.", "globalThis."):
+        out.append(_CALL_RE.sub(lambda m, sc=scope: sc + m.group(1) + "(", s))
+    out.append(_CALL_RE.sub(lambda m: m.group(1) + "?.(", s))
+    return out
+
+
+def _fn_wrap(s):
+    out = []
+    for fn in ("alert", "confirm", "prompt"):
+        token = fn + "(1)"
+        if token in s:
+            out.append(s.replace(token, "eval('%s'+'%s(1)')" % (fn[:2], fn[2:])))
+            out.append(s.replace(token, "Function('%s(1)')()" % fn))
+            out.append(s.replace(token, "setTimeout('%s(1)',0)" % fn))
+    return out
+
+
+def _fullwidth_brackets(s):
+    if "<" not in s or ">" not in s:
+        return None
+    return s.replace("<", "＜").replace(">", "＞")
+
+
 def variants(payload, char_map=None):
     out = []
     seen = set()
@@ -66,6 +94,11 @@ def variants(payload, char_map=None):
     add(_backtick_call(payload))
     add(_comment_split_tag(payload))
     add(_entity_scheme(payload))
+    for v in _scope_calls(payload):
+        add(v)
+    for v in _fn_wrap(payload):
+        add(v)
+    add(_fullwidth_brackets(payload))
 
     blocked_paren = char_map is not None and not char_map.get("(", True)
     if blocked_paren:

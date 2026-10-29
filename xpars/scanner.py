@@ -3,10 +3,10 @@ from __future__ import annotations
 import concurrent.futures as cf
 import sys
 import threading
-from urllib.parse import quote, urljoin, urlsplit
+from urllib.parse import parse_qsl, quote, urljoin, urlsplit
 
 from . import crlf as crlf_mod
-from . import detect, params, payloads, refine, waf
+from . import detect, harvest, params, payloads, refine, waf
 
 DOM_HASH_SOURCES = ("location.hash", "location.href", "document.url",
                     "document.documenturi")
@@ -403,6 +403,62 @@ def _host(url):
     return (refine.safe_split(url).hostname or "").lower()
 
 
+_PATH_FUTILE = {}
+_PATH_FUTILE_LOCK = threading.Lock()
+
+
+def _origin(url):
+    p = refine.safe_split(url)
+    return "%s://%s" % (p.scheme, p.netloc)
+
+
+def _path_scan_futile(client, url):
+    origin = _origin(url)
+    with _PATH_FUTILE_LOCK:
+        if origin in _PATH_FUTILE:
+            return _PATH_FUTILE[origin]
+    mk = payloads.marker()
+    try:
+        r = client.get(origin + "/" + quote(detect.probe_value(mk), safe=""))
+    except Exception:
+        r = None
+    futile = False
+    if r is not None:
+        try:
+            body = r.text
+        except Exception:
+            body = ""
+        if mk in body:
+            surv = detect.char_survival(body, mk)
+            futile = not any(surv.get(c) for c in "<>\"'")
+    with _PATH_FUTILE_LOCK:
+        _PATH_FUTILE[origin] = futile
+    return futile
+
+
+def spray_order(urls):
+    buckets = {}
+    order = []
+    for u in urls:
+        h = _host(u)
+        if h not in buckets:
+            buckets[h] = []
+            order.append(h)
+        buckets[h].append(u)
+    out = []
+    idx = 0
+    remaining = True
+    while remaining:
+        remaining = False
+        for h in order:
+            b = buckets[h]
+            if idx < len(b):
+                out.append(b[idx])
+                remaining = True
+        idx += 1
+    return out
+
+
 def dedup_findings(findings):
     out = []
     seen = {}
@@ -421,11 +477,118 @@ def dedup_findings(findings):
     return out
 
 
+def harvest_pass(client, urls, cap=40):
+    agg = {"secrets": [], "endpoints": [],
+           "candidates": {"lfi": [], "rce": [], "sqli": [], "xss": []}}
+    seen = set()
+    count = 0
+    for u in urls:
+        if count >= cap:
+            break
+        try:
+            parts = refine.safe_split(u)
+            key = (parts.hostname, parts.path)
+        except Exception:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        count += 1
+        try:
+            body = client.get(u).text
+        except Exception:
+            continue
+        harvest.merge(agg, harvest.scan(body))
+        for src in detect.script_srcs(body)[:8]:
+            jsurl = refine.safe_join(u, src)
+            if not jsurl:
+                continue
+            try:
+                js = client.get(jsurl).text
+            except Exception:
+                continue
+            harvest.merge(agg, harvest.scan(js))
+    return agg
+
+
+def _has_params(u):
+    try:
+        q = refine.safe_split(u).query
+    except Exception:
+        return False
+    if not q:
+        return False
+    try:
+        return bool(parse_qsl(q, keep_blank_values=True))
+    except Exception:
+        return False
+
+
+def harvest_collect(client, urls, permitted=None, cap=40):
+    agg = {"secrets": [], "endpoints": [],
+           "candidates": {"lfi": [], "rce": [], "sqli": [], "xss": []}}
+    inject = []
+    inj_seen = set()
+    seen = set()
+    count = 0
+
+    def consider(base, raw):
+        ju = refine.safe_join(base, raw)
+        if not ju:
+            return
+        parts = refine.safe_split(ju)
+        if (parts.scheme or "").lower() not in ("http", "https"):
+            return
+        if permitted is not None and not permitted(ju):
+            return
+        if not _has_params(ju):
+            return
+        k = (parts.hostname, parts.path, parts.query)
+        if k in inj_seen:
+            return
+        inj_seen.add(k)
+        inject.append(ju)
+
+    for u in urls:
+        if count >= cap:
+            break
+        try:
+            parts = refine.safe_split(u)
+            key = (parts.hostname, parts.path)
+        except Exception:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        count += 1
+        try:
+            body = client.get(u).text
+        except Exception:
+            continue
+        sc = harvest.scan(body)
+        harvest.merge(agg, sc)
+        for e in sc.get("endpoints", []):
+            consider(u, e)
+        for src in detect.script_srcs(body)[:8]:
+            jsurl = refine.safe_join(u, src)
+            if not jsurl:
+                continue
+            try:
+                js = client.get(jsurl).text
+            except Exception:
+                continue
+            sj = harvest.scan(js)
+            harvest.merge(agg, sj)
+            for e in sj.get("endpoints", []):
+                consider(u, e)
+    return agg, inject
+
+
 def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=None,
          crlf=False, stop_on_confirm=False, evade=False, header_scan=False,
          json_forms=None, path_scan=False, multipart=False, json_templates=None,
          csti=False, graphql=None, dom_urls=None, prefilter=True, on_update=None,
-         on_progress=None):
+         on_progress=None, do_harvest=False):
     result = {"findings": [], "dom": [], "blind_sent": [], "interrupted": False}
     confirmed = set()
     lock = threading.Lock()
@@ -445,7 +608,7 @@ def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=Non
         finds, blind_sent = scan_url(client, u, payloads_list, blind, evade)
         if crlf:
             finds = finds + crlf_mod.scan_crlf(client, u)
-        if path_scan:
+        if path_scan and not _path_scan_futile(client, u):
             finds = finds + scan_path(client, u, payloads_list, evade)
         if header_scan:
             finds = finds + scan_headers(client, u, payloads_list, evade)
@@ -524,5 +687,11 @@ def scan(client, urls, threads=8, payloads_list=None, blind=None, post_forms=Non
             result["dom"] = _dom_pass(client, dom_urls if dom_urls is not None else list(urls))
         except Exception:
             result["dom"] = []
+    if do_harvest and not result["interrupted"]:
+        try:
+            result["harvest"] = harvest_pass(
+                client, dom_urls if dom_urls is not None else list(urls))
+        except Exception:
+            result["harvest"] = {}
     result["findings"] = dedup_findings(result["findings"])
     return result

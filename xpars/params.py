@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 COMMON_PARAMS = [
     "q", "s", "search", "id", "page", "p", "url", "redirect", "redir", "next",
@@ -21,6 +21,23 @@ def set_param(url, name, value):
     pairs = parse_qsl(parts.query, keep_blank_values=True)
     new_pairs = [(k, value if k == name else v) for k, v in pairs]
     query = urlencode(new_pairs, safe="")
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
+
+
+def set_param_raw(url, name, raw):
+    parts = urlsplit(url)
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    out = []
+    replaced = False
+    for k, v in pairs:
+        if k == name:
+            out.append(quote(k, safe="") + "=" + raw)
+            replaced = True
+        else:
+            out.append(quote(k, safe="") + "=" + quote(v, safe=""))
+    if not replaced:
+        out.append(quote(name, safe="") + "=" + raw)
+    query = "&".join(out)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
 
 

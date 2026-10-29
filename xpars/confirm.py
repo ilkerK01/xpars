@@ -157,18 +157,43 @@ _TRIGGER_JS = r"""
 () => {
   const o = {bubbles:true, cancelable:true, composed:true};
   const fire = (el, t) => { try { el.dispatchEvent(new Event(t, o)); } catch(e){} };
-  let els;
-  try { els = Array.from(document.querySelectorAll('*')); } catch(e){ return; }
-  for (const el of els) {
-    try { if (el.tagName === 'DETAILS') el.open = true; } catch(e){}
-    try { if (el.hasAttribute && el.hasAttribute('hidden')) el.removeAttribute('hidden'); } catch(e){}
-    const names = el.getAttributeNames ? el.getAttributeNames() : [];
-    for (const a of names) {
-      if (a.length > 2 && a.slice(0,2).toLowerCase() === 'on') fire(el, a.slice(2));
+  const visit = (root) => {
+    let els;
+    try { els = Array.from(root.querySelectorAll('*')); } catch(e){ return; }
+    for (const el of els) {
+      try { if (el.tagName === 'DETAILS') el.open = true; } catch(e){}
+      try { if (el.hasAttribute && el.hasAttribute('hidden')) el.removeAttribute('hidden'); } catch(e){}
+      const names = el.getAttributeNames ? el.getAttributeNames() : [];
+      for (const a of names) {
+        if (a.length > 2 && a.slice(0,2).toLowerCase() === 'on') fire(el, a.slice(2));
+      }
+      try { if (typeof el.focus === 'function') el.focus(); } catch(e){}
+      try { if (typeof el.click === 'function') el.click(); } catch(e){}
+      try {
+        const tn = (el.tagName || '').toLowerCase();
+        if ((tn === 'animate' || tn === 'set' || tn === 'animatetransform')
+            && typeof el.beginElement === 'function') el.beginElement();
+      } catch(e){}
+      try { if (el.shadowRoot) visit(el.shadowRoot); } catch(e){}
     }
-    try { if (typeof el.focus === 'function') el.focus(); } catch(e){}
-    try { if (typeof el.click === 'function') el.click(); } catch(e){}
-  }
+    try {
+      const forms = root.querySelectorAll ? root.querySelectorAll('form') : [];
+      for (const f of forms) {
+        try {
+          const btns = f.querySelectorAll('[formaction]');
+          for (const b of btns) {
+            try {
+              const ba = (b.getAttribute('formaction') || '').trim().toLowerCase();
+              if (ba.indexOf('javascript:') === 0) b.click();
+            } catch(e){}
+          }
+          const fa = (f.getAttribute('action') || '').trim().toLowerCase();
+          if (fa.indexOf('javascript:') === 0) { try { f.submit(); } catch(e){} }
+        } catch(e){}
+      }
+    } catch(e){}
+  };
+  try { visit(document); } catch(e){}
 }
 """
 
@@ -209,9 +234,12 @@ def _mk_handler(msgs):
 
 class Engine:
 
-    def __init__(self, timeout=8.0, headless=True):
+    def __init__(self, timeout=8.0, headless=True, capture=False, storage_state=None):
         self.timeout = timeout
         self.headless = headless
+        self.capture = capture
+        self.storage_state = storage_state
+        self._shot = None
         self._pw = None
         self.browser = None
         self.ctx = None
@@ -226,7 +254,11 @@ class Engine:
                   "--disable-background-timer-throttling",
                   "--disable-renderer-backgrounding"],
         )
-        self.ctx = self.browser.new_context(ignore_https_errors=True)
+        if self.storage_state is not None:
+            self.ctx = self.browser.new_context(ignore_https_errors=True,
+                                                storage_state=self.storage_state)
+        else:
+            self.ctx = self.browser.new_context(ignore_https_errors=True)
         self.ctx.set_default_navigation_timeout(int(self.timeout * 1000))
         self.ctx.set_default_timeout(int(self.timeout * 1000))
         self.ctx.add_init_script(_INIT_SCRIPT)
@@ -243,6 +275,7 @@ class Engine:
     def _run(self, nav, interact=True, hashnav=False) -> list[str]:
         page = self.ctx.new_page()
         msgs: list[str] = []
+        self._shot = None
         page.on("dialog", _mk_handler(msgs))
         try:
             nav(page)
@@ -253,10 +286,11 @@ class Engine:
                 except Exception:
                     pass
             if interact:
-                try:
-                    page.evaluate(_TRIGGER_JS)
-                except Exception:
-                    pass
+                for fr in page.frames:
+                    try:
+                        fr.evaluate(_TRIGGER_JS)
+                    except Exception:
+                        pass
                 page.wait_for_timeout(200)
             try:
                 prog = page.evaluate("window.__xd || []")
@@ -264,6 +298,12 @@ class Engine:
                     msgs.append(d.get("message", ""))
             except Exception:
                 pass
+            if self.capture and msgs:
+                try:
+                    import base64
+                    self._shot = base64.b64encode(page.screenshot()).decode("ascii")
+                except Exception:
+                    self._shot = None
         except Exception:
             pass
         finally:
@@ -379,6 +419,8 @@ class Engine:
                 f["verified_payload"] = payload
                 f["payload"] = payload
                 f["confirm_marker"] = m
+                if self._shot:
+                    f["screenshot"] = "data:image/png;base64," + self._shot
                 return True
         f["verified"] = False
         return False
@@ -458,7 +500,8 @@ VERIFY_METHODS = ("GET", "CSTI-GET", "PATH", "POST", "POST-JSON", "GRAPHQL",
                   "HEADER", "COOKIE", "STORED")
 
 
-def run(findings, dom=None, timeout=8.0, headless=True) -> dict:
+def run(findings, dom=None, timeout=8.0, headless=True, capture=False,
+        storage_state=None) -> dict:
     dom = dom or []
     f_targets = [f for f in findings if (f.get("method") or "GET").upper() in VERIFY_METHODS]
     d_targets = [d for d in dom if _dom_kinds(d.get("sources", []))]
@@ -469,7 +512,8 @@ def run(findings, dom=None, timeout=8.0, headless=True) -> dict:
     }
     if not summary["supported"] or (not f_targets and not d_targets):
         return summary
-    with Engine(timeout=timeout, headless=headless) as eng:
+    with Engine(timeout=timeout, headless=headless, capture=capture,
+                storage_state=storage_state) as eng:
         for f in f_targets:
             try:
                 if eng.confirm_finding(f):

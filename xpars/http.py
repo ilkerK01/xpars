@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import sys
 import threading
 import time
@@ -8,6 +9,17 @@ from urllib.parse import urlsplit
 import requests
 
 MAX_BYTES = 8_000_000
+
+
+def stealth_profile(level):
+    level = (level or "").lower()
+    if level == "high":
+        return {"rps": 0.5, "delay": 0.5, "jitter": 1.5}
+    if level == "medium":
+        return {"rps": 1.0, "delay": 0.2, "jitter": 0.6}
+    if level == "low":
+        return {"rps": 3.0, "delay": 0.0, "jitter": 0.2}
+    return {"rps": 0.0, "delay": 0.0, "jitter": 0.0}
 
 
 def _retry_after(resp, attempt):
@@ -23,9 +35,11 @@ def _retry_after(resp, attempt):
 class Client:
     def __init__(self, timeout=10.0, delay=0.0, headers=None, cookie=None,
                  user_agent=None, retries=1, proxy=None, verify=True,
-                 max_bytes=MAX_BYTES, rps=0.0, verbose=False, logpath=None):
+                 max_bytes=MAX_BYTES, rps=0.0, verbose=False, logpath=None,
+                 jitter=0.0, cookies=None):
         self.timeout = timeout
         self.delay = delay
+        self.jitter = jitter
         self.retries = retries
         self.max_bytes = max_bytes
         self.verbose = verbose
@@ -47,6 +61,14 @@ class Client:
             self.session.proxies.update({"http": proxy, "https": proxy})
         if cookie:
             self.session.headers["Cookie"] = cookie
+        for ck in cookies or []:
+            try:
+                self.session.cookies.set(
+                    ck.get("name"), ck.get("value"),
+                    domain=(ck.get("domain") or "").lstrip("."),
+                    path=ck.get("path") or "/")
+            except Exception:
+                pass
         for raw in headers or []:
             key, _, value = raw.partition(":")
             if key.strip():
@@ -123,8 +145,11 @@ class Client:
                 continue
             self._read_capped(resp)
             self._log(method, url, resp.status_code)
-            if self.delay:
-                time.sleep(self.delay)
+            pause = self.delay
+            if self.jitter:
+                pause += random.uniform(0, self.jitter)
+            if pause:
+                time.sleep(pause)
             return resp
         if isinstance(last, Exception):
             raise last

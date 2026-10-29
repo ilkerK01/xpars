@@ -107,3 +107,19 @@ def test_cli_auto_pipeline(server, capsys):
     assert rc == 0
     assert "[kesif]" in out
     assert "[XSS]" in out
+
+
+def test_cli_harvest_feed_and_detect_split(server, tmp_path, capsys):
+    from xpars import cli
+    host = server.replace("http://", "")
+    det = tmp_path / "detect.txt"
+    rc = cli.main(["--get", "-u", host, "--auto", "--harvest", "--no-confirm",
+                   "--threads", "4", "--detect", str(det)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "[hasat]" in out
+    assert "taramaya eklendi" in out
+    assert det.exists()
+    body = det.read_text(encoding="utf-8")
+    assert "reflect" in body
+    assert not (tmp_path / "detect-confirmed.txt").exists()

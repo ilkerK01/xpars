@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures as cf
+import html as htmllib
 import re
 from html.parser import HTMLParser
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
@@ -31,14 +32,14 @@ class _Parser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         d = dict(attrs)
         if tag in ("a", "link") and d.get("href"):
-            self.links.append(d["href"])
+            self.links.append(htmllib.unescape(d["href"]))
         if tag == "script":
             if d.get("src"):
-                self.scripts.append(d["src"])
+                self.scripts.append(htmllib.unescape(d["src"]))
             else:
                 self._in_script = True
         if tag == "form":
-            self._form = {"action": d.get("action", ""),
+            self._form = {"action": htmllib.unescape(d.get("action", "")),
                           "method": (d.get("method") or "get").lower(),
                           "fields": [], "values": {}}
         if tag in ("input", "textarea", "select") and self._form is not None and d.get("name"):
