@@ -265,22 +265,19 @@ _ENTITY = {
 
 
 def char_survival(body, marker):
-    survived = {}
-    for ch in PROBE_TAIL:
-        survived[ch] = False
+    survived = {ch: False for ch in PROBE_TAIL}
     for idx in _all_indices(body, marker):
-        seg = body[idx + len(marker):idx + len(marker) + 2 * len(PROBE_TAIL) + 8]
+        seg = body[idx + len(marker):idx + len(marker) + len(PROBE_TAIL) + 2]
         low = seg.lower()
         for ch in PROBE_TAIL:
             if survived[ch]:
                 continue
+            if ch not in seg:
+                continue
             ents = _ENTITY.get(ch)
-            if ents:
-                escaped = any(e in low for e in ents)
-                if ch in seg and not escaped:
-                    survived[ch] = True
-            elif ch in seg:
-                survived[ch] = True
+            if ents and any(e in low for e in ents):
+                continue
+            survived[ch] = True
     return survived
 
 

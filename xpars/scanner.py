@@ -30,7 +30,7 @@ def _finding(method, url, param, refs, char_map, working, status, body, mk):
         severity = "low"
     else:
         severity = "high"
-    if working or best_confirmed:
+    if working:
         confidence = "confirmed"
     elif best == "json_reflection":
         confidence = "non-executable"
