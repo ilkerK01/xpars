@@ -23,12 +23,19 @@ def _contexts_from(refs):
 
 def _finding(method, url, param, refs, char_map, working, status, body, mk):
     best = refs[0]["context"] if refs else "none"
+    best_confirmed = refs[0]["confirmed"] if refs else False
     if best == "json_reflection":
         severity = "medium"
     elif best == "encoded":
         severity = "low"
     else:
         severity = "high"
+    if working or best_confirmed:
+        confidence = "confirmed"
+    elif best == "json_reflection":
+        confidence = "non-executable"
+    else:
+        confidence = "reflected"
     return {
         "url": url,
         "param": param,
@@ -41,6 +48,7 @@ def _finding(method, url, param, refs, char_map, working, status, body, mk):
         "working_payloads": working[:20],
         "evidence": detect.evidence(body, mk),
         "severity": severity,
+        "confidence": confidence,
         "how": "raw-injection" if working else "reflected-context",
         "verified": False,
     }
@@ -126,9 +134,11 @@ def _build_finding(pr, method, url, param, mk, payloads_list, send, client, evad
     if working:
         f["how"] = "waf-evaded"
         f["severity"] = "high"
+        f["confidence"] = "confirmed"
     else:
         f["how"] = "reflected-behind-waf"
         f["severity"] = "low"
+        f["confidence"] = "behind-waf"
     return f
 
 

@@ -525,9 +525,10 @@ def main(argv=None):
             vrf = "verified" if f.get("verified") else "reflected"
             pay = (f.get("payload") or "").replace("\n", " ").replace("\r", " ")
             new_lines.append(
-                "[%s] %s %s %s %s param=%s ctx=%s payload=%s" % (
+                "[%s] %s %s %s %s param=%s ctx=%s conf=%s payload=%s" % (
                     ts, sev, vrf, f.get("method", ""), f.get("url", ""),
-                    f.get("param", ""), f.get("context", ""), pay))
+                    f.get("param", ""), f.get("context", ""),
+                    f.get("confidence", ""), pay))
         if not new_lines:
             return
         try:
@@ -541,9 +542,10 @@ def main(argv=None):
         ts = time.strftime("%H:%M:%S")
         sev = str(f.get("severity", "")).upper()
         pay = (f.get("payload") or "").replace("\n", " ").replace("\r", " ")
-        return "[%s] %s%s %s %s param=%s ctx=%s payload=%s" % (
+        return "[%s] %s%s %s %s param=%s ctx=%s conf=%s payload=%s" % (
             ts, mark, sev, f.get("method", ""), f.get("url", ""),
-            f.get("param", ""), f.get("context", ""), pay)
+            f.get("param", ""), f.get("context", ""),
+            f.get("confidence", ""), pay)
 
     def _detect_split(findings):
         if not args.detectpath:

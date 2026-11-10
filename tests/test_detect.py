@@ -61,3 +61,36 @@ def test_html_confirmed_with_html_ct():
     mk = "xqdeadbeefqx"
     body = "<div>" + mk + "'\"<></div>"
     assert detect.reflection(body, mk, "text/html") == (True, "html", True)
+
+
+def test_script_double_quote_string_raw_single_not_confirmed():
+    mk = "xqdeadbeefqx"
+    body = ('<script>self.__next_f.push([1,"x\\"urlParts\\":[\\"\\",\\"login'
+            + mk + '%3C%3E\'%22%60\\"]"])</script>')
+    reflected, context, confirmed = detect.reflection(body, mk)
+    assert reflected is True
+    assert context == "script"
+    assert confirmed is False
+
+
+def test_script_single_quote_string_confirmed():
+    mk = "xqdeadbeefqx"
+    body = "<html><script>var a='" + mk + "'+1</script></html>"
+    assert detect.reflection(body, mk) == (True, "script", True)
+
+
+def test_attribute_own_closing_quote_not_confirmed():
+    mk = "xqdeadbeefqx"
+    body = '<input type="hidden" name="view" value="' + mk + '">'
+    reflected, context, confirmed = detect.reflection(body, mk)
+    assert confirmed is False
+    assert context != "attribute"
+
+
+def test_js_resource_reflection_not_confirmed():
+    mk = "xqdeadbeefqx"
+    body = 'var route="/x/' + mk + '<>\'\"";'
+    reflected, context, confirmed = detect.reflection(body, mk, "application/javascript")
+    assert reflected is True
+    assert confirmed is False
+    assert context == "encoded"

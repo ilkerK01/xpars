@@ -96,6 +96,76 @@ def _script_executable(low, idx):
     return m.group(1).strip() in JS_SCRIPT_TYPES
 
 
+def _script_content_start(low, idx):
+    tstart = low.rfind("<script", 0, idx)
+    if tstart < 0:
+        return 0
+    tend = low.find(">", tstart)
+    if tend < 0 or tend >= idx:
+        return tstart
+    return tend + 1
+
+
+def _js_string_quote(s):
+    q = None
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if q is not None:
+            if c == "\\":
+                i += 2
+                continue
+            if c == q:
+                q = None
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and s[i + 1] == "/":
+            nl = s.find("\n", i)
+            if nl < 0:
+                return None
+            i = nl + 1
+            continue
+        if c == "/" and i + 1 < n and s[i + 1] == "*":
+            end = s.find("*/", i + 2)
+            if end < 0:
+                return None
+            i = end + 2
+            continue
+        if c in "\"'`":
+            q = c
+        i += 1
+    return q
+
+
+def _attr_breaks(tail, quote):
+    i = tail.find(quote)
+    if i < 0:
+        return False
+    nxt = tail[i + 1:i + 2]
+    if nxt == "" or nxt == ">" or nxt.isspace() or nxt.isalnum():
+        return False
+    return True
+
+
+def _js_breaks(tail, quote):
+    i = 0
+    n = len(tail)
+    while i < n:
+        j = tail.find(quote, i)
+        if j < 0:
+            return False
+        if j > 0 and tail[j - 1] == "\\":
+            i = j + 1
+            continue
+        nxt = tail[j + 1:j + 2]
+        if nxt == "" or nxt.isspace() or nxt.isalnum():
+            i = j + 1
+            continue
+        return True
+    return False
+
+
 def _context_at(body, low, idx, marker, is_json):
     tail = body[idx + len(marker):idx + len(marker) + 12]
     raw_lt = "<" in tail
@@ -112,9 +182,10 @@ def _context_at(body, low, idx, marker, is_json):
     if special == "script":
         if not _script_executable(low, idx):
             return ("rcdata", False)
-        if raw_dq or raw_sq:
-            return ("script", True)
-        return ("script", False)
+        sq = _js_string_quote(body[_script_content_start(low, idx):idx])
+        if sq is not None:
+            return ("script", _js_breaks(tail, sq))
+        return ("script", raw_dq or raw_sq)
     pre = body[max(0, idx - 200):idx]
     in_tag = pre.rfind("<") > pre.rfind(">")
     tag_seg = pre[pre.rfind("<"):] if in_tag else ""
@@ -127,7 +198,9 @@ def _context_at(body, low, idx, marker, is_json):
     in_uri_attr = attr_name in URI_ATTRS
     if raw_lt and raw_gt and not is_json:
         return ("html", True)
-    if (inside_dq and raw_dq) or (inside_sq and raw_sq):
+    if inside_dq and raw_dq and _attr_breaks(tail, '"'):
+        return ("attribute", True)
+    if inside_sq and raw_sq and _attr_breaks(tail, "'"):
         return ("attribute", True)
     if in_uri_attr and (inside_dq or inside_sq or in_tag):
         low_pre = (tag_seg + body[idx:idx + len(marker) + 2]).lower()
@@ -159,7 +232,13 @@ def reflections(body, marker, content_type=""):
     low = body.lower()
     ct = (content_type or "").lower()
     is_json = "json" in ct and "html" not in ct
+    is_js_doc = ("javascript" in ct or "ecmascript" in ct) and "html" not in ct
     for idx in _all_indices(body, marker):
+        if is_js_doc:
+            out.append({"context": "encoded", "confirmed": False,
+                        "index": idx,
+                        "score": CONTEXT_SCORE[("encoded", False)]})
+            continue
         context, confirmed = _context_at(body, low, idx, marker, is_json)
         score = CONTEXT_SCORE.get((context, confirmed), 20 if confirmed else 8)
         out.append({"context": context, "confirmed": confirmed,
@@ -217,6 +296,20 @@ def _payload_signature(payload):
 NEEDS_BREAKOUT = ("rcdata", "comment", "style")
 
 
+def _script_quote_breaks(body, p):
+    low = body.lower()
+    start = 0
+    while True:
+        i = body.find(p, start)
+        if i < 0:
+            return False
+        if _enclosing_special(low, i) == "script" and _script_executable(low, i):
+            q = _js_string_quote(body[_script_content_start(low, i):i])
+            if q is None or q in p:
+                return True
+        start = i + len(p)
+
+
 def payload_lands(body, payload, context=None):
     p = payload.strip()
     if len(p) < 4:
@@ -226,7 +319,11 @@ def payload_lands(body, payload, context=None):
     breaks = any(c in p for c in "<>\"'")
     strict = context in NEEDS_BREAKOUT
     if p in body and (has_tag or (breaks and not strict)):
-        return True
+        if context == "script" and not has_tag:
+            if _script_quote_breaks(body, p):
+                return True
+        else:
+            return True
     tag_name, handler_txt, scheme = _payload_signature(p)
     if tag_name and handler_txt:
         rx = re.compile("<" + re.escape(tag_name) + r"[^<>\"'&]*" + re.escape(handler_txt)
@@ -239,7 +336,8 @@ def payload_lands(body, payload, context=None):
             return True
     if scheme and not tag_name and context in ("uri", None):
         uri = "|".join(re.escape(a) for a in URI_ATTRS)
-        if re.search(r"(?:" + uri + r")\s*=\s*[\"']?\s*javascript:", body, re.IGNORECASE):
+        if re.search(r"(?:" + uri + r")\s*=\s*[\"']?\s*" + re.escape(p),
+                     body, re.IGNORECASE):
             return True
     return False
 

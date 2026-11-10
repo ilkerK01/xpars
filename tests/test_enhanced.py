@@ -110,3 +110,15 @@ def test_evade_expands_payloads(server):
     result = scanner.scan(_client(), [server + "/reflect?q=1"],
                           payloads_list=payloads.DEFAULT, evade=True)
     assert any(f["working_payloads"] for f in result["findings"])
+
+
+def test_payload_lands_scheme_not_preexisting_link():
+    body = '<a href="javascript: history.go(-1)">Return</a>'
+    assert detect.payload_lands(body, "javascript:alert(1)", "uri") is False
+
+
+def test_payload_lands_script_quote_type():
+    dq = '<script>var x="a' + "'-alert(1)-'" + 'b";</script>'
+    sq = "<script>var x='a" + "'-alert(1)-'" + "b';</script>"
+    assert detect.payload_lands(dq, "'-alert(1)-'", "script") is False
+    assert detect.payload_lands(sq, "'-alert(1)-'", "script") is True
