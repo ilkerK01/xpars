@@ -124,6 +124,7 @@ def _build_finding(pr, method, url, param, mk, payloads_list, send, client, evad
     working = _probe_payloads(client, send, payloads_list, pr["contexts"],
                               pr["char_map"], evade_eff) if pr["refs"] else []
     if pr["mode"] == "normal":
+        working = [p for p in working if detect.breaks_survive(p, pr["char_map"])]
         if not (pr["confirmed_any"] or working):
             return None
         return _finding(method, url, param, pr["refs"], pr["char_map"], working,
@@ -468,6 +469,26 @@ def spray_order(urls):
                 remaining = True
         idx += 1
     return out
+
+
+def cap_per_host(urls, n):
+    if not n or n <= 0:
+        return list(urls)
+    by_host = {}
+    order = []
+    for u in urls:
+        h = _host(u)
+        if h not in by_host:
+            by_host[h] = []
+            order.append(h)
+        by_host[h].append(u)
+    keep = set()
+    for h in order:
+        lst = by_host[h]
+        withq = [u for u in lst if "?" in u]
+        without = [u for u in lst if "?" not in u]
+        keep.update((withq + without)[:n])
+    return [u for u in urls if u in keep]
 
 
 def dedup_findings(findings):

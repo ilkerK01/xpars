@@ -147,7 +147,9 @@ def build_parser():
     p.add_argument("--harvest", action="store_true")
     p.add_argument("--rps", type=float, default=0.0)
     p.add_argument("--stealth", choices=["low", "medium", "high"], default=None)
-    p.add_argument("--spray", action="store_true")
+    p.add_argument("--spray", dest="spray", action="store_true", default=True)
+    p.add_argument("--no-spray", dest="spray", action="store_false")
+    p.add_argument("--per-host-cap", dest="per_host_cap", type=int, default=60)
     p.add_argument("--multipart", action="store_true")
     p.add_argument("--json-data", dest="json_data", action="append")
     p.add_argument("--blind-url", dest="blind_url")
@@ -589,8 +591,12 @@ def main(argv=None):
             except Exception:
                 pass
 
+    if args.per_host_cap and args.per_host_cap > 0:
+        get_scan_list = scanner.cap_per_host(get_scan_list, args.per_host_cap)
+        dom_list = scanner.cap_per_host(dom_list, args.per_host_cap)
     if args.spray:
         get_scan_list = scanner.spray_order(get_scan_list)
+        dom_list = scanner.spray_order(dom_list)
     result = scanner.scan(client, get_scan_list, threads=args.threads,
                           payloads_list=payload_list, blind=args.blind,
                           post_forms=post_forms, crlf=args.crlf,

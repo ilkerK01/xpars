@@ -264,21 +264,26 @@ _ENTITY = {
 }
 
 
+_SURVIVE_WINDOW = 10
+
+
 def char_survival(body, marker):
     survived = {ch: False for ch in PROBE_TAIL}
     for idx in _all_indices(body, marker):
-        seg = body[idx + len(marker):idx + len(marker) + len(PROBE_TAIL) + 2]
-        low = seg.lower()
+        seg = body[idx + len(marker):idx + len(marker) + _SURVIVE_WINDOW]
         for ch in PROBE_TAIL:
-            if survived[ch]:
-                continue
-            if ch not in seg:
-                continue
-            ents = _ENTITY.get(ch)
-            if ents and any(e in low for e in ents):
-                continue
-            survived[ch] = True
+            if not survived[ch] and ch in seg:
+                survived[ch] = True
     return survived
+
+
+def breaks_survive(payload, char_map):
+    p = payload.strip()
+    if "<" in p:
+        return bool(char_map.get("<", False))
+    if '"' in p or "'" in p:
+        return bool(char_map.get('"', False) or char_map.get("'", False))
+    return True
 
 
 def _payload_signature(payload):
