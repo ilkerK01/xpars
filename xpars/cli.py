@@ -8,7 +8,7 @@ import time
 from urllib.parse import parse_qsl, urlsplit
 
 from . import (blind, burp, confirm, crawl, dirscan, discover as discover_mod,
-               http, params as paramlib, passive, payloads, refine, report,
+               http, params as paramlib, passive, payloads, refine, render, report,
                scanner, scope, session as session_mod, stored, verify, waf)
 
 _GREEN = "\033[92m"
@@ -176,6 +176,8 @@ def build_parser():
     p.add_argument("--no-waf", dest="waf", action="store_false")
     p.add_argument("--subdomains", action="store_true")
     p.add_argument("--max-pages", dest="max_pages", type=int, default=60)
+    p.add_argument("--render", action="store_true")
+    p.add_argument("--render-pages", dest="render_pages", type=int, default=30)
     p.add_argument("--endpoints", dest="endpoints")
     p.add_argument("--aggressive-dedup", dest="aggressive_dedup", action="store_true")
     p.add_argument("--no-dedup", dest="no_dedup", action="store_true")
@@ -342,6 +344,21 @@ def main(argv=None):
                 sys.stderr.write("[uyari] crawl hatasi, tohumlarla devam: %s\n"
                                  % type(exc).__name__)
                 collected += list(permitted)
+        if args.render and render.available():
+            try:
+                rendpoints = render.render_crawl(permitted, sc, mode=mode,
+                                                 timeout=args.timeout,
+                                                 max_pages=args.render_pages,
+                                                 forms_out=post_forms,
+                                                 on_progress=(None if args.verbose
+                                                              else _crawl_progress))
+                collected += list(rendpoints)
+                print("[render] %d JS-render uc" % len(rendpoints))
+            except Exception as exc:
+                sys.stderr.write("[uyari] render crawl hatasi: %s\n"
+                                 % type(exc).__name__)
+        elif args.render:
+            sys.stderr.write("[uyari] --render icin playwright yok, atlandi\n")
         collected = [u for u in collected if sc.permitted(u)]
         full = refine.refine(collected, params_only=False,
                              dedup=not args.no_dedup, collapse_numbers=args.aggressive_dedup)
