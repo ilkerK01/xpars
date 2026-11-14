@@ -45,3 +45,15 @@ def test_working_payload_is_confirmed():
     f = scanner._finding("GET", "http://t/x?q=1", "q", refs, char_map,
                          ["<svg onload=alert(1)>"], 200, "body", "xqmk")
     assert f["confidence"] == "confirmed"
+
+
+def test_payload_lands_script_tag_matches_native_svg_is_fp():
+    body = ('<script>var u="https://x/?utm=mk%3Csvg";</script>'
+            '<svg viewBox="0 0 10 10"><path d="M0 0z"/></svg>')
+    assert detect.payload_lands(body, "<svg", "script") is False
+    assert detect.payload_lands(body, "<svg onload=alert(1)>", "script") is False
+
+
+def test_payload_lands_script_handler_breakout_still_true():
+    body = '<script>var u="x";</script><svg onload=alert(1)>'
+    assert detect.payload_lands(body, "<svg onload=alert(1)>", "script") is True

@@ -316,7 +316,7 @@ def payload_lands(body, payload, context=None):
     breaks = any(c in p for c in "<>\"'")
     strict = context in NEEDS_BREAKOUT
     if p in body and (has_tag or (breaks and not strict)):
-        if context == "script" and not has_tag:
+        if context == "script":
             if _script_quote_breaks(body, p):
                 return True
         else:
